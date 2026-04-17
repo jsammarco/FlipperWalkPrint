@@ -1,1 +1,2 @@
 pybluez2>=0.46
+Pillow>=10.0

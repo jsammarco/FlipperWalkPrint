@@ -9,6 +9,7 @@
 #define WALKPRINT_BRIDGE_BAUDRATE 115200U
 #define WALKPRINT_BRIDGE_RX_STREAM_SIZE 512U
 #define WALKPRINT_BRIDGE_LINE_SIZE 160U
+#define WALKPRINT_BRIDGE_MAX_HEX_COMMAND_BYTES 1024U
 #define WALKPRINT_BRIDGE_DEFAULT_TIMEOUT_MS 12000U
 #define WALKPRINT_BRIDGE_PING_TIMEOUT_MS 1000U
 
@@ -399,6 +400,8 @@ static bool walkprint_transport_live_send(
     WalkPrintTransport* transport,
     const uint8_t* data,
     size_t length) {
+    size_t offset = 0;
+
     if(!transport || !transport->connected || !data || length == 0) {
         return false;
     }
@@ -407,8 +410,18 @@ static bool walkprint_transport_live_send(
         return false;
     }
 
-    if(!walkprint_bridge_send_hex_command(transport, "BT_WRITE_HEX", data, length)) {
-        return false;
+    while(offset < length) {
+        size_t chunk_length = length - offset;
+        if(chunk_length > WALKPRINT_BRIDGE_MAX_HEX_COMMAND_BYTES) {
+            chunk_length = WALKPRINT_BRIDGE_MAX_HEX_COMMAND_BYTES;
+        }
+
+        if(!walkprint_bridge_send_hex_command(
+               transport, "BT_WRITE_HEX", data + offset, chunk_length)) {
+            return false;
+        }
+
+        offset += chunk_length;
     }
 
     transport->send_count++;

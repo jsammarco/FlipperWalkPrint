@@ -8,7 +8,7 @@
 
 #define WALKPRINT_TEST_BITMAP_WIDTH 384U
 #define WALKPRINT_TEST_BITMAP_WIDTH_BYTES (WALKPRINT_TEST_BITMAP_WIDTH / 8U)
-#define WALKPRINT_TEST_BITMAP_HEIGHT 32U
+#define WALKPRINT_TEST_BITMAP_HEIGHT 96U
 #define WALKPRINT_TEST_FONT_WIDTH 5U
 #define WALKPRINT_TEST_FONT_HEIGHT 7U
 #define WALKPRINT_TEST_FONT_SPACING 1U
@@ -64,6 +64,18 @@ static const WalkPrintGlyph walkprint_test_font[] = {
 static uint8_t walkprint_test_raster_buffer
     [WALKPRINT_TEST_BITMAP_WIDTH_BYTES * WALKPRINT_TEST_BITMAP_HEIGHT];
 
+const char* walkprint_protocol_font_family_name(WalkPrintFontFamily family) {
+    switch(family) {
+    case WalkPrintFontFamilyBold:
+        return "Bold";
+    case WalkPrintFontFamilySlant:
+        return "Slant";
+    case WalkPrintFontFamilyClassic:
+    default:
+        return "Classic";
+    }
+}
+
 static void walkprint_protocol_reset_frame(WalkPrintFrame* frame) {
     if(frame) {
         frame->length = 0;
@@ -111,11 +123,34 @@ static void walkprint_protocol_set_pixel(
     raster[byte_index] |= bit_mask;
 }
 
+static void walkprint_protocol_set_styled_pixel(
+    uint8_t* raster,
+    size_t x,
+    size_t y,
+    size_t width,
+    size_t height,
+    WalkPrintFontFamily family) {
+    size_t styled_x = x;
+
+    if(family == WalkPrintFontFamilySlant) {
+        styled_x += y / 3U;
+    }
+
+    if(styled_x < width && y < height) {
+        walkprint_protocol_set_pixel(raster, styled_x, y, width, height);
+    }
+
+    if(family == WalkPrintFontFamilyBold && (styled_x + 1U) < width) {
+        walkprint_protocol_set_pixel(raster, styled_x + 1U, y, width, height);
+    }
+}
+
 static void walkprint_protocol_draw_text_line(
     uint8_t* raster,
     size_t y_offset,
     const char* text,
-    uint8_t font_scale) {
+    uint8_t font_scale,
+    WalkPrintFontFamily family) {
     size_t x_offset = 0;
 
     if(!raster || !text) {
@@ -138,12 +173,13 @@ static void walkprint_protocol_draw_text_line(
                                 y_offset + (row * font_scale) + sy;
 
                             if(px < WALKPRINT_TEST_BITMAP_WIDTH && py < WALKPRINT_TEST_BITMAP_HEIGHT) {
-                                walkprint_protocol_set_pixel(
+                                walkprint_protocol_set_styled_pixel(
                                     raster,
                                     px,
                                     py,
                                     WALKPRINT_TEST_BITMAP_WIDTH,
-                                    WALKPRINT_TEST_BITMAP_HEIGHT);
+                                    WALKPRINT_TEST_BITMAP_HEIGHT,
+                                    family);
                             }
                         }
                     }
@@ -161,6 +197,7 @@ static bool walkprint_protocol_build_bitmap_receipt(
     bool include_density_line,
     uint8_t density,
     uint8_t font_scale,
+    WalkPrintFontFamily font_family,
     WalkPrintFrame* out_frame) {
     char density_line[16];
     uint8_t header[8];
@@ -170,23 +207,29 @@ static bool walkprint_protocol_build_bitmap_receipt(
         return false;
     }
 
+    if(font_family >= WalkPrintFontFamilyCount) {
+        font_family = WalkPrintFontFamilyClassic;
+    }
+
     if(clamped_scale < 1U) {
         clamped_scale = 1U;
-    } else if(clamped_scale > 3U) {
-        clamped_scale = 3U;
+    } else if(clamped_scale > 10U) {
+        clamped_scale = 10U;
     }
 
     walkprint_protocol_reset_frame(out_frame);
     memset(walkprint_test_raster_buffer, 0, sizeof(walkprint_test_raster_buffer));
 
-    walkprint_protocol_draw_text_line(walkprint_test_raster_buffer, 2U, message, clamped_scale);
+    walkprint_protocol_draw_text_line(
+        walkprint_test_raster_buffer, 2U, message, clamped_scale, font_family);
     if(include_density_line) {
         snprintf(density_line, sizeof(density_line), "DARK %u", density);
         walkprint_protocol_draw_text_line(
             walkprint_test_raster_buffer,
             4U + (WALKPRINT_TEST_FONT_HEIGHT * clamped_scale) + 4U,
             density_line,
-            1U);
+            1U,
+            WalkPrintFontFamilyClassic);
     }
 
     header[0] = 0x1D;
@@ -226,7 +269,12 @@ bool walkprint_protocol_build_test_receipt(
     }
 
     if(!walkprint_protocol_build_bitmap_receipt(
-           "TEST PRINT", true, density, WALKPRINT_TEST_FONT_DEFAULT_SCALE, out_frame)) {
+           "TEST PRINT",
+           true,
+           density,
+           WALKPRINT_TEST_FONT_DEFAULT_SCALE,
+           WalkPrintFontFamilyClassic,
+           out_frame)) {
         return false;
     }
 
@@ -239,12 +287,14 @@ bool walkprint_protocol_build_message_receipt(
     const char* message,
     uint8_t density,
     uint8_t font_scale,
+    WalkPrintFontFamily font_family,
     WalkPrintFrame* out_frame) {
     if(!protocol || !protocol->initialized || !message || !out_frame) {
         return false;
     }
 
-    if(!walkprint_protocol_build_bitmap_receipt(message, false, density, font_scale, out_frame)) {
+    if(!walkprint_protocol_build_bitmap_receipt(
+           message, false, density, font_scale, font_family, out_frame)) {
         return false;
     }
 

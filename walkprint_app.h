@@ -39,6 +39,7 @@ typedef struct {
     size_t address_cursor;
     uint8_t density;
     uint8_t font_size;
+    WalkPrintFontFamily font_family;
     char printer_address[WALKPRINT_PRINTER_ADDRESS_STR_SIZE];
     char compose_message[33];
     char status_line[WALKPRINT_STATUS_TEXT_SIZE];
@@ -71,6 +72,7 @@ bool walkprint_app_discover_printer(WalkPrintApp* app);
 bool walkprint_app_scan_wifi(WalkPrintApp* app);
 void walkprint_app_adjust_density(WalkPrintApp* app, int8_t delta);
 void walkprint_app_adjust_font_size(WalkPrintApp* app, int8_t delta);
+void walkprint_app_adjust_font_family(WalkPrintApp* app, int8_t delta);
 void walkprint_app_move_address_cursor(WalkPrintApp* app, int8_t delta);
 void walkprint_app_adjust_address_char(WalkPrintApp* app, int8_t delta);
 const char* walkprint_app_connection_label(const WalkPrintApp* app);

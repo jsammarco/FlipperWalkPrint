@@ -13,10 +13,10 @@ The build scripts prefer your local Momentum firmware checkout when it is presen
 ## Current State
 
 - The Flipper app builds cleanly against Momentum and outputs [dist/walkprint.fap](/C:/Users/jasammarco.ENG/Projects/WalkPrint/dist/walkprint.fap).
-- The app UI now includes printer discovery and Wi-Fi scan actions.
+- The app UI now includes printer discovery, Wi-Fi scan, and configurable message font size/family settings.
 - The live transport in [walkprint_transport_live.c](/C:/Users/jasammarco.ENG/Projects/WalkPrint/walkprint_transport_live.c) uses Flipper header pins `13/14` (`PB6/PB7`) at `115200`.
 - The ESP32 bridge sketch lives at [esp32_bridge/walkprint_esp32_bridge/walkprint_esp32_bridge.ino](/C:/Users/jasammarco.ENG/Projects/WalkPrint/esp32_bridge/walkprint_esp32_bridge/walkprint_esp32_bridge.ino).
-- A desktop bridge also still exists under [bridge/README.md](/C:/Users/jasammarco.ENG/Projects/WalkPrint/bridge/README.md) if you want a PC-side fallback.
+- A desktop bridge also still exists under [bridge/README.md](/C:/Users/jasammarco.ENG/Projects/WalkPrint/bridge/README.md) if you want a PC-side fallback, including image conversion and image printing helpers.
 
 ## ESP32 Bridge
 
@@ -127,7 +127,15 @@ The app now shows:
 - connection state
 - the configured printer address
 - the configured density placeholder
+- the configured font size from `1-10`
+- the selected font family
 - the latest bridge discovery or Wi-Fi scan result
+
+The desktop bridge now adds:
+
+- `python bridge/walkprint_bridge.py image <path>` to send an image directly
+- `python bridge/walkprint_bridge.py convert-image <path>` to generate the printer payload without sending
+- `.\bridge\send_image.ps1` to select an image with a Windows file picker and send it
 
 ## Notes
 

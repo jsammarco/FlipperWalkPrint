@@ -73,6 +73,7 @@ static void walkprint_app_seed_defaults(WalkPrintApp* app) {
     app->address_cursor = 0;
     app->density = WALKPRINT_DENSITY_DEFAULT;
     app->font_size = 2;
+    app->font_family = WalkPrintFontFamilyClassic;
 
     walkprint_app_copy_text(
         app->printer_address,
@@ -408,7 +409,12 @@ bool walkprint_app_send_message(WalkPrintApp* app) {
     }
 
     if(!walkprint_protocol_build_message_receipt(
-           &app->protocol, app->compose_message, app->density, app->font_size, &frame)) {
+           &app->protocol,
+           app->compose_message,
+           app->density,
+           app->font_size,
+           app->font_family,
+           &frame)) {
         walkprint_app_set_status(app, "Message build failed", "See logs");
         return false;
     }
@@ -574,12 +580,32 @@ void walkprint_app_adjust_font_size(WalkPrintApp* app, int8_t delta) {
     next_size = (int)app->font_size + (int)delta;
     if(next_size < 1) {
         next_size = 1;
-    } else if(next_size > 3) {
-        next_size = 3;
+    } else if(next_size > 10) {
+        next_size = 10;
     }
 
     app->font_size = (uint8_t)next_size;
     walkprint_app_set_status(app, "Font size updated", app->compose_message);
+}
+
+void walkprint_app_adjust_font_family(WalkPrintApp* app, int8_t delta) {
+    int next_family;
+
+    if(!app || delta == 0) {
+        return;
+    }
+
+    next_family = (int)app->font_family + (int)delta;
+    while(next_family < 0) {
+        next_family += (int)WalkPrintFontFamilyCount;
+    }
+    while(next_family >= (int)WalkPrintFontFamilyCount) {
+        next_family -= (int)WalkPrintFontFamilyCount;
+    }
+
+    app->font_family = (WalkPrintFontFamily)next_family;
+    walkprint_app_set_status(
+        app, "Font family updated", walkprint_protocol_font_family_name(app->font_family));
 }
 
 static bool walkprint_app_is_address_separator(size_t index) {

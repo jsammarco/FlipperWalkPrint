@@ -20,6 +20,7 @@ static const char* const walkprint_settings_items[] = {
     "Printer Address",
     "Density",
     "Font Size",
+    "Font Family",
 };
 
 static size_t walkprint_ui_main_menu_count(void) {
@@ -89,6 +90,7 @@ static void walkprint_ui_draw_busy(Canvas* canvas, WalkPrintApp* app) {
 
 static void walkprint_ui_draw_settings(Canvas* canvas, WalkPrintApp* app) {
     char line[WALKPRINT_HEX_PREVIEW_SIZE];
+    const char* family_name = walkprint_protocol_font_family_name(app->font_family);
 
     walkprint_ui_draw_line(canvas, 24, app->detail_line);
 
@@ -113,13 +115,23 @@ static void walkprint_ui_draw_settings(Canvas* canvas, WalkPrintApp* app) {
                 app->density);
             break;
         case 2:
-        default:
             snprintf(
                 line,
                 sizeof(line),
                 "%c Font: %u",
                 (i == app->settings_index) ? '>' : ' ',
                 app->font_size);
+            break;
+        case 3:
+            snprintf(
+                line,
+                sizeof(line),
+                "%c Family: %s",
+                (i == app->settings_index) ? '>' : ' ',
+                family_name);
+            break;
+        default:
+            snprintf(line, sizeof(line), "%c ?", (i == app->settings_index) ? '>' : ' ');
             break;
         }
 
@@ -263,7 +275,7 @@ static void walkprint_ui_handle_main_menu(WalkPrintApp* app, const InputEvent* i
             break;
         case 8:
             app->screen = WalkPrintScreenSettings;
-            walkprint_app_set_status(app, "Settings", "Address and density");
+            walkprint_app_set_status(app, "Settings", "Address font and density");
             break;
         case 9:
             app->screen = WalkPrintScreenAbout;
@@ -298,6 +310,8 @@ static void walkprint_ui_handle_settings(WalkPrintApp* app, const InputEvent* in
             walkprint_app_adjust_density(app, -1);
         } else if(app->settings_index == 2) {
             walkprint_app_adjust_font_size(app, -1);
+        } else if(app->settings_index == 3) {
+            walkprint_app_adjust_font_family(app, -1);
         }
         break;
     case InputKeyRight:
@@ -305,6 +319,8 @@ static void walkprint_ui_handle_settings(WalkPrintApp* app, const InputEvent* in
             walkprint_app_adjust_density(app, 1);
         } else if(app->settings_index == 2) {
             walkprint_app_adjust_font_size(app, 1);
+        } else if(app->settings_index == 3) {
+            walkprint_app_adjust_font_family(app, 1);
         }
         break;
     case InputKeyOk:
@@ -313,8 +329,10 @@ static void walkprint_ui_handle_settings(WalkPrintApp* app, const InputEvent* in
             walkprint_app_set_status(app, "Editing address", app->printer_address);
         } else if(app->settings_index == 1) {
             walkprint_app_adjust_density(app, 1);
-        } else {
+        } else if(app->settings_index == 2) {
             walkprint_app_adjust_font_size(app, 1);
+        } else {
+            walkprint_app_adjust_font_family(app, 1);
         }
         break;
     case InputKeyBack:

@@ -15,7 +15,16 @@ typedef struct {
     size_t length;
 } WalkPrintFrame;
 
+typedef enum {
+    WalkPrintFontFamilyClassic = 0,
+    WalkPrintFontFamilyBold,
+    WalkPrintFontFamilySlant,
+    WalkPrintFontFamilyCount,
+} WalkPrintFontFamily;
+
 void walkprint_protocol_init(WalkPrintProtocol* protocol);
+
+const char* walkprint_protocol_font_family_name(WalkPrintFontFamily family);
 
 bool walkprint_protocol_build_test_receipt(
     WalkPrintProtocol* protocol,
@@ -29,6 +38,7 @@ bool walkprint_protocol_build_message_receipt(
     const char* message,
     uint8_t density,
     uint8_t font_scale,
+    WalkPrintFontFamily font_family,
     WalkPrintFrame* out_frame);
 
 bool walkprint_protocol_build_feed(
