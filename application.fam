@@ -1,0 +1,24 @@
+App(
+    appid="walkprint",
+    name="WalkPrint",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="walkprint_app",
+    stack_size=8 * 1024,
+    fap_version="0.1",
+    fap_category="Tools",
+    fap_description="WalkPrint printer transport/protocol prototype",
+    fap_author="OpenAI Codex",
+    sources=[
+        "app_ui.c",
+        "walkprint_app.c",
+        "walkprint_protocol.c",
+        "walkprint_transport_live.c",
+        "walkprint_debug.c",
+    ],
+    requires=[
+        "gui",
+    ],
+    targets=[
+        "f7",
+    ],
+)
