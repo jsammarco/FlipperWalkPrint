@@ -30,6 +30,8 @@ struct WalkPrintTransport {
     char printer_address[WALKPRINT_PRINTER_ADDRESS_STR_SIZE];
     char printer_name[WALKPRINT_STATUS_TEXT_SIZE];
     char last_response[WALKPRINT_STATUS_TEXT_SIZE];
+    char wifi_networks[10][WALKPRINT_STATUS_TEXT_SIZE];
+    size_t wifi_network_count;
     uint32_t send_count;
     FuriHalSerialHandle* serial_handle;
     FuriStreamBuffer* rx_stream;
@@ -51,6 +53,7 @@ static inline bool walkprint_transport_init(
     transport->ops = ops;
     transport->initialized = false;
     transport->connected = false;
+    transport->wifi_network_count = 0;
     transport->send_count = 0;
 
     return ops->init(transport, printer_address);

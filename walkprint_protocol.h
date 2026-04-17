@@ -22,9 +22,16 @@ typedef enum {
     WalkPrintFontFamilyCount,
 } WalkPrintFontFamily;
 
+typedef enum {
+    WalkPrintOrientationNormal = 0,
+    WalkPrintOrientationUpsideDown,
+    WalkPrintOrientationCount,
+} WalkPrintOrientation;
+
 void walkprint_protocol_init(WalkPrintProtocol* protocol);
 
 const char* walkprint_protocol_font_family_name(WalkPrintFontFamily family);
+const char* walkprint_protocol_orientation_name(WalkPrintOrientation orientation);
 
 bool walkprint_protocol_build_test_receipt(
     WalkPrintProtocol* protocol,
@@ -39,6 +46,8 @@ bool walkprint_protocol_build_message_receipt(
     uint8_t density,
     uint8_t font_scale,
     WalkPrintFontFamily font_family,
+    uint8_t char_spacing,
+    WalkPrintOrientation orientation,
     WalkPrintFrame* out_frame);
 
 bool walkprint_protocol_build_feed(

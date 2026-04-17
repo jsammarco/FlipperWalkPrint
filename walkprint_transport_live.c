@@ -182,6 +182,14 @@ static void walkprint_bridge_handle_wifi_line(WalkPrintTransport* transport, con
     memset(encryption, 0, sizeof(encryption));
     if(sscanf(line, "WIFI|%47[^|]|%d|%15s", ssid, &rssi, encryption) >= 2) {
         snprintf(summary, sizeof(summary), "%.36s %ddBm", ssid, rssi);
+        if(transport->wifi_network_count < 10U) {
+            snprintf(
+                transport->wifi_networks[transport->wifi_network_count],
+                WALKPRINT_STATUS_TEXT_SIZE,
+                "%s",
+                summary);
+            transport->wifi_network_count++;
+        }
         walkprint_bridge_set_response(transport, summary);
     }
 }
@@ -438,6 +446,7 @@ static bool walkprint_transport_live_discover_printer(WalkPrintTransport* transp
     }
 
     transport->printer_name[0] = '\0';
+    transport->wifi_network_count = 0;
     walkprint_bridge_set_response(transport, "");
     walkprint_bridge_flush_rx(transport);
     walkprint_bridge_send_command(transport, "BT_SCAN");
@@ -454,6 +463,7 @@ static bool walkprint_transport_live_scan_wifi(WalkPrintTransport* transport) {
         return false;
     }
 
+    transport->wifi_network_count = 0;
     walkprint_bridge_set_response(transport, "");
     walkprint_bridge_flush_rx(transport);
     walkprint_bridge_send_command(transport, "WIFI_SCAN");

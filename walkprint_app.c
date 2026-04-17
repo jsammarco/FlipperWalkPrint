@@ -16,9 +16,7 @@ typedef enum {
     WalkPrintCustomEventPingBridge = 1,
     WalkPrintCustomEventDiscoverPrinter,
     WalkPrintCustomEventConnect,
-    WalkPrintCustomEventPrintTest,
     WalkPrintCustomEventPrintMessage,
-    WalkPrintCustomEventSendRaw,
     WalkPrintCustomEventFeedPaper,
     WalkPrintCustomEventScanWifi,
 } WalkPrintCustomEvent;
@@ -70,10 +68,13 @@ static void walkprint_app_seed_defaults(WalkPrintApp* app) {
     app->running = true;
     app->main_menu_index = 0;
     app->settings_index = 0;
+    app->wifi_results_index = 0;
     app->address_cursor = 0;
     app->density = WALKPRINT_DENSITY_DEFAULT;
-    app->font_size = 2;
+    app->font_size = 3;
+    app->char_spacing = 2;
     app->font_family = WalkPrintFontFamilyClassic;
+    app->orientation = WalkPrintOrientationUpsideDown;
 
     walkprint_app_copy_text(
         app->printer_address,
@@ -142,27 +143,26 @@ static bool walkprint_app_handle_custom_event(void* context, uint32_t event) {
     case WalkPrintCustomEventConnect:
         walkprint_app_connect(app);
         break;
-    case WalkPrintCustomEventPrintTest:
-        walkprint_app_send_test_receipt(app);
-        break;
     case WalkPrintCustomEventPrintMessage:
         walkprint_app_send_message(app);
-        break;
-    case WalkPrintCustomEventSendRaw:
-        walkprint_app_send_configured_raw_frame(app);
         break;
     case WalkPrintCustomEventFeedPaper:
         walkprint_app_send_feed(app);
         break;
     case WalkPrintCustomEventScanWifi:
-        walkprint_app_scan_wifi(app);
+        handled = walkprint_app_scan_wifi(app);
+        if(handled) {
+            app->screen = WalkPrintScreenWifiResults;
+            app->wifi_results_index = 0;
+            walkprint_app_set_status(app, "WiFi Results", app->transport.last_response);
+        }
         break;
     default:
         handled = false;
         break;
     }
 
-    if(handled) {
+    if(handled && app->screen != WalkPrintScreenWifiResults) {
         app->screen = WalkPrintScreenMainMenu;
         walkprint_app_request_redraw(app);
     }
@@ -250,11 +250,6 @@ void walkprint_app_queue_connect(WalkPrintApp* app) {
         app, WalkPrintCustomEventConnect, "Connecting printer", "Opening Bluetooth link");
 }
 
-void walkprint_app_queue_send_test_receipt(WalkPrintApp* app) {
-    walkprint_app_queue_busy_action(
-        app, WalkPrintCustomEventPrintTest, "Printing test", "Sending raster receipt");
-}
-
 void walkprint_app_queue_send_message(WalkPrintApp* app) {
     walkprint_app_queue_busy_action(
         app, WalkPrintCustomEventPrintMessage, "Printing message", "Rendering custom text");
@@ -263,11 +258,6 @@ void walkprint_app_queue_send_message(WalkPrintApp* app) {
 void walkprint_app_queue_send_feed(WalkPrintApp* app) {
     walkprint_app_queue_busy_action(
         app, WalkPrintCustomEventFeedPaper, "Feeding paper", "Sending feed command");
-}
-
-void walkprint_app_queue_send_configured_raw_frame(WalkPrintApp* app) {
-    walkprint_app_queue_busy_action(
-        app, WalkPrintCustomEventSendRaw, "Sending raw frame", "Writing configured bytes");
 }
 
 void walkprint_app_queue_scan_wifi(WalkPrintApp* app) {
@@ -349,58 +339,6 @@ bool walkprint_app_ping_bridge(WalkPrintApp* app) {
     return false;
 }
 
-bool walkprint_app_send_test_receipt(WalkPrintApp* app) {
-    WalkPrintFrame frame;
-
-    if(!app || !walkprint_app_require_connection(app, "Use Connect first")) {
-        return false;
-    }
-
-    if(!walkprint_protocol_build_test_receipt(
-           &app->protocol,
-           walkprint_demo_receipt_lines,
-           WALKPRINT_DEMO_RECEIPT_LINE_COUNT,
-           app->density,
-           &frame)) {
-        walkprint_app_set_status(app, "Receipt build failed", "See logs");
-        return false;
-    }
-
-    if(!walkprint_transport_send(
-           &app->transport, walkprint_config_init_frame, WALKPRINT_INIT_FRAME_LEN)) {
-        walkprint_app_set_status(app, "Receipt send failed", app->transport.last_response);
-        return false;
-    }
-
-    furi_delay_ms(500);
-
-    if(!walkprint_transport_send(
-           &app->transport,
-           walkprint_config_start_print_frame,
-           WALKPRINT_START_PRINT_FRAME_LEN)) {
-        walkprint_app_set_status(app, "Receipt send failed", app->transport.last_response);
-        return false;
-    }
-
-    furi_delay_ms(500);
-
-    if(!walkprint_protocol_send_frame(&app->protocol, &app->transport, &frame)) {
-        walkprint_app_set_status(app, "Receipt send failed", app->transport.last_response);
-        return false;
-    }
-
-    furi_delay_ms(500);
-
-    if(!walkprint_transport_send(
-           &app->transport, walkprint_config_end_print_frame, WALKPRINT_END_PRINT_FRAME_LEN)) {
-        walkprint_app_set_status(app, "Receipt send failed", app->transport.last_response);
-        return false;
-    }
-
-    walkprint_app_set_status(app, "Receipt sent", "Raster image payload");
-    return true;
-}
-
 bool walkprint_app_send_message(WalkPrintApp* app) {
     WalkPrintFrame frame;
 
@@ -414,6 +352,8 @@ bool walkprint_app_send_message(WalkPrintApp* app) {
            app->density,
            app->font_size,
            app->font_family,
+           app->char_spacing,
+           app->orientation,
            &frame)) {
         walkprint_app_set_status(app, "Message build failed", "See logs");
         return false;
@@ -530,28 +470,6 @@ bool walkprint_app_send_feed(WalkPrintApp* app) {
     return true;
 }
 
-bool walkprint_app_send_configured_raw_frame(WalkPrintApp* app) {
-    WalkPrintFrame frame;
-
-    if(!app || !walkprint_app_require_connection(app, "Use Connect first")) {
-        return false;
-    }
-
-    if(!walkprint_protocol_build_raw(
-           &app->protocol, walkprint_config_raw_frame, WALKPRINT_RAW_FRAME_LEN, &frame)) {
-        walkprint_app_set_status(app, "Raw build failed", "Check config bytes");
-        return false;
-    }
-
-    if(!walkprint_protocol_send_frame(&app->protocol, &app->transport, &frame)) {
-        walkprint_app_set_status(app, "Raw send failed", app->transport.last_response);
-        return false;
-    }
-
-    walkprint_app_set_status(app, "Raw frame sent", app->raw_frame_preview);
-    return true;
-}
-
 void walkprint_app_adjust_density(WalkPrintApp* app, int8_t delta) {
     int density;
 
@@ -588,6 +506,24 @@ void walkprint_app_adjust_font_size(WalkPrintApp* app, int8_t delta) {
     walkprint_app_set_status(app, "Font size updated", app->compose_message);
 }
 
+void walkprint_app_adjust_char_spacing(WalkPrintApp* app, int8_t delta) {
+    int next_spacing;
+
+    if(!app || delta == 0) {
+        return;
+    }
+
+    next_spacing = (int)app->char_spacing + (int)delta;
+    if(next_spacing < 0) {
+        next_spacing = 0;
+    } else if(next_spacing > 10) {
+        next_spacing = 10;
+    }
+
+    app->char_spacing = (uint8_t)next_spacing;
+    walkprint_app_set_status(app, "Spacing updated", app->compose_message);
+}
+
 void walkprint_app_adjust_font_family(WalkPrintApp* app, int8_t delta) {
     int next_family;
 
@@ -606,6 +542,26 @@ void walkprint_app_adjust_font_family(WalkPrintApp* app, int8_t delta) {
     app->font_family = (WalkPrintFontFamily)next_family;
     walkprint_app_set_status(
         app, "Font family updated", walkprint_protocol_font_family_name(app->font_family));
+}
+
+void walkprint_app_adjust_orientation(WalkPrintApp* app, int8_t delta) {
+    int next_orientation;
+
+    if(!app || delta == 0) {
+        return;
+    }
+
+    next_orientation = (int)app->orientation + (int)delta;
+    while(next_orientation < 0) {
+        next_orientation += (int)WalkPrintOrientationCount;
+    }
+    while(next_orientation >= (int)WalkPrintOrientationCount) {
+        next_orientation -= (int)WalkPrintOrientationCount;
+    }
+
+    app->orientation = (WalkPrintOrientation)next_orientation;
+    walkprint_app_set_status(
+        app, "Orientation updated", walkprint_protocol_orientation_name(app->orientation));
 }
 
 static bool walkprint_app_is_address_separator(size_t index) {
@@ -654,11 +610,10 @@ void walkprint_app_adjust_address_char(WalkPrintApp* app, int8_t delta) {
 
 const char* walkprint_app_connection_label(const WalkPrintApp* app) {
     if(!app || !app->transport.initialized || !app->transport.bridge_ready) {
-        return "bridge-offline";
+        return "Off";
     }
 
-    return walkprint_transport_is_connected(&app->transport) ? "printer-connected" :
-                                                               "bridge-ready";
+    return walkprint_transport_is_connected(&app->transport) ? "Conn" : "Ready";
 }
 
 static WalkPrintApp* walkprint_app_alloc(void) {
