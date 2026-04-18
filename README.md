@@ -24,9 +24,11 @@ The ESP32 bridge is the practical transport layer for this setup because it can 
 
 ## Hardware Photos
 
+|  |  |
 | --- | --- |
 | ![Flipper module printer 2](https://raw.githubusercontent.com/jsammarco/FlipperWalkPrint/refs/heads/main/Images/flipper%20module%20printer2.jpg) | ![Flipper module printer](https://raw.githubusercontent.com/jsammarco/FlipperWalkPrint/refs/heads/main/Images/flipper%20module%20printer.jpg) |
 
+|  |  |
 | --- | --- |
 | ![Inland ESP-32](https://raw.githubusercontent.com/jsammarco/FlipperWalkPrint/refs/heads/main/Images/Inland%20ESP-32.JPG) | ![Flipper module back](https://raw.githubusercontent.com/jsammarco/FlipperWalkPrint/refs/heads/main/Images/flipper%20module%20back.jpg) |
 
