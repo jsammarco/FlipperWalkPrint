@@ -200,7 +200,7 @@ function Filter-PrinterCandidates {
     return $Devices
 }
 
-function Update-DefaultPrinterAddress {
+function Save-PrinterSelectionHint {
     param(
         [Parameter(Mandatory = $true)][string]$HeaderPath,
         [Parameter(Mandatory = $true)][string]$Address
@@ -210,14 +210,8 @@ function Update-DefaultPrinterAddress {
         throw "Config header not found: $HeaderPath"
     }
 
-    $content = Get-Content $HeaderPath -Raw
-    $pattern = '(#define\s+WALKPRINT_DEFAULT_PRINTER_ADDRESS\s+)"[^"]*"'
-    if($content -notmatch $pattern) {
-        throw "Could not find WALKPRINT_DEFAULT_PRINTER_ADDRESS in $HeaderPath"
-    }
-
-    $updated = [regex]::Replace($content, $pattern, ('$1"{0}"' -f $Address), 1)
-    Set-Content -Path $HeaderPath -Value $updated -NoNewline
+    Write-Step "WalkPrint no longer hardcodes a default MAC in the firmware."
+    Write-Step "Use discovery in the app once and it will save $Address for future launches."
 }
 
 $keywords = $NameFilter.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
@@ -262,8 +256,7 @@ $chosen = $candidates[$selectedIndex - 1]
 Write-Step ("Selected {0} at {1}" -f $chosen.Name, $chosen.Address)
 
 if($WriteDefaultAddress) {
-    Update-DefaultPrinterAddress -HeaderPath $ConfigHeader -Address $chosen.Address
-    Write-Step "Updated WALKPRINT_DEFAULT_PRINTER_ADDRESS in $ConfigHeader"
+    Save-PrinterSelectionHint -HeaderPath $ConfigHeader -Address $chosen.Address
 } else {
     Write-Step "Use this address in the WalkPrint app settings: $($chosen.Address)"
 }

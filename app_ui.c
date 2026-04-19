@@ -116,7 +116,7 @@ static void walkprint_ui_draw_settings(Canvas* canvas, WalkPrintApp* app) {
                 sizeof(line),
                 "%c Addr: %s",
                 (item_index == app->settings_index) ? '>' : ' ',
-                app->printer_address);
+                walkprint_app_printer_address_label(app));
             break;
         case 1:
             snprintf(
@@ -178,7 +178,7 @@ static void walkprint_ui_draw_address_editor(Canvas* canvas, WalkPrintApp* app) 
     }
 
     walkprint_ui_draw_line(canvas, 24, "Edit printer MAC/ID");
-    walkprint_ui_draw_line(canvas, 34, app->printer_address);
+    walkprint_ui_draw_line(canvas, 34, app->address_edit_buffer);
     walkprint_ui_draw_line(canvas, 42, cursor_line);
     walkprint_ui_draw_line(canvas, 50, "L/R move U/D change");
     walkprint_ui_draw_line(canvas, 58, "OK/Back save");
@@ -368,8 +368,9 @@ static void walkprint_ui_handle_settings(WalkPrintApp* app, const InputEvent* in
         break;
     case InputKeyOk:
         if(app->settings_index == 0) {
+            walkprint_app_begin_address_edit(app);
             app->screen = WalkPrintScreenEditAddress;
-            walkprint_app_set_status(app, "Editing address", app->printer_address);
+            walkprint_app_set_status(app, "Editing address", app->address_edit_buffer);
         } else if(app->settings_index == 1) {
             walkprint_app_adjust_density(app, 1);
         } else if(app->settings_index == 2) {
@@ -429,6 +430,7 @@ static void walkprint_ui_handle_address_editor(WalkPrintApp* app, const InputEve
         break;
     case InputKeyOk:
     case InputKeyBack:
+        walkprint_app_commit_address_edit(app);
         app->screen = WalkPrintScreenSettings;
         walkprint_app_set_status(app, "Address updated", app->printer_address);
         break;

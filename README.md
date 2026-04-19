@@ -82,7 +82,6 @@ Printer-specific placeholders live in `walkprint_config.h`.
 
 Edit these first:
 
-- `WALKPRINT_DEFAULT_PRINTER_ADDRESS`
 - `walkprint_config_init_frame`
 - `walkprint_config_start_print_frame`
 - `walkprint_config_end_print_frame`
@@ -139,12 +138,13 @@ qFlipper CLI:
 The app now shows:
 
 - connection state
-- the configured printer address
+- the saved printer address, once discovery or manual entry sets it
 - the configured density placeholder
 - the configured font size from `1-10`
 - the selected font family
 - the latest bridge discovery or Wi-Fi scan result
 - BMP print status for `.bmp` files selected from storage
+- persisted settings after the app closes, including printer MAC, message, BMP path, and print options
 
 The desktop bridge now adds:
 

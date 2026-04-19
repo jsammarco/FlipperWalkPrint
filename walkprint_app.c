@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define WALKPRINT_SETTINGS_MAGIC 0x57505431UL
+#define WALKPRINT_SETTINGS_VERSION 1U
 #define WALKPRINT_BMP_MAGIC 0x4D42U
 #define WALKPRINT_PRINTER_BITMAP_WIDTH 384U
 #define WALKPRINT_PRINTER_BITMAP_WIDTH_BYTES (WALKPRINT_PRINTER_BITMAP_WIDTH / 8U)
@@ -51,6 +53,19 @@ typedef struct {
     bool top_down;
 } WalkPrintBmpInfo;
 
+typedef struct {
+    uint32_t magic;
+    uint16_t version;
+    uint8_t density;
+    uint8_t font_size;
+    uint8_t char_spacing;
+    uint8_t font_family;
+    uint8_t orientation;
+    char printer_address[WALKPRINT_PRINTER_ADDRESS_STR_SIZE];
+    char compose_message[33];
+    char image_path[WALKPRINT_PATH_MAX_SIZE];
+} WalkPrintSavedSettings;
+
 static uint16_t walkprint_app_read_le16(const uint8_t* bytes) {
     return (uint16_t)bytes[0] | ((uint16_t)bytes[1] << 8U);
 }
@@ -76,6 +91,9 @@ static void walkprint_app_copy_text(char* dst, size_t dst_size, const char* src)
 
     snprintf(dst, dst_size, "%s", src);
 }
+
+static bool walkprint_app_load_settings(WalkPrintApp* app);
+static bool walkprint_app_save_settings(WalkPrintApp* app);
 
 static void walkprint_app_queue_busy_action(
     WalkPrintApp* app,
@@ -109,16 +127,15 @@ static void walkprint_app_seed_defaults(WalkPrintApp* app) {
     app->settings_index = 0;
     app->wifi_results_index = 0;
     app->address_cursor = 0;
+    app->address_edit_dirty = false;
     app->density = WALKPRINT_DENSITY_DEFAULT;
     app->font_size = 3;
     app->char_spacing = 2;
     app->font_family = WalkPrintFontFamilyClassic;
     app->orientation = WalkPrintOrientationUpsideDown;
 
-    walkprint_app_copy_text(
-        app->printer_address,
-        sizeof(app->printer_address),
-        WALKPRINT_DEFAULT_PRINTER_ADDRESS);
+    app->printer_address[0] = '\0';
+    app->address_edit_buffer[0] = '\0';
     walkprint_app_copy_text(app->compose_message, sizeof(app->compose_message), "HELLO");
     walkprint_debug_format_hex_preview(
         walkprint_config_raw_frame,
@@ -128,7 +145,7 @@ static void walkprint_app_seed_defaults(WalkPrintApp* app) {
     if(app->image_path) {
         furi_string_set(app->image_path, STORAGE_EXT_PATH_PREFIX);
     }
-    walkprint_app_set_status(app, "Ready", "ESP32 bridge target");
+    walkprint_app_set_status(app, "Ready", "Discover printer to save MAC");
 }
 
 static void walkprint_app_main_view_draw(Canvas* canvas, void* model) {
@@ -164,6 +181,7 @@ static void walkprint_app_text_input_done(void* context) {
 
     app->screen = WalkPrintScreenMainMenu;
     view_dispatcher_switch_to_view(app->view_dispatcher, WalkPrintViewMain);
+    walkprint_app_save_settings(app);
     walkprint_app_queue_send_message(app);
 }
 
@@ -345,6 +363,11 @@ bool walkprint_app_connect(WalkPrintApp* app) {
         return true;
     }
 
+    if(!walkprint_app_has_printer_address(app)) {
+        walkprint_app_set_status(app, "No printer saved", "Run discovery or set MAC");
+        return false;
+    }
+
     if(!app->transport.bridge_ready) {
         walkprint_app_reset_transport(app);
         if(!app->transport.bridge_ready) {
@@ -354,6 +377,7 @@ bool walkprint_app_connect(WalkPrintApp* app) {
     }
 
     if(walkprint_transport_connect(&app->transport)) {
+        walkprint_app_save_settings(app);
         walkprint_app_set_status(
             app,
             "Connected",
@@ -446,6 +470,112 @@ bool walkprint_app_send_message(WalkPrintApp* app) {
 
 static bool walkprint_app_storage_read_exact(File* file, void* buffer, size_t length) {
     return file && buffer && storage_file_read(file, buffer, length) == length;
+}
+
+static bool walkprint_app_storage_write_exact(File* file, const void* buffer, size_t length) {
+    return file && buffer && storage_file_write(file, buffer, length) == length;
+}
+
+static bool walkprint_app_load_settings(WalkPrintApp* app) {
+    File* file;
+    WalkPrintSavedSettings saved;
+    bool ok = false;
+
+    if(!app || !app->storage) {
+        return false;
+    }
+
+    file = storage_file_alloc(app->storage);
+    if(!file) {
+        return false;
+    }
+
+    if(storage_file_open(file, WALKPRINT_SETTINGS_PATH, FSAM_READ, FSOM_OPEN_EXISTING) &&
+       walkprint_app_storage_read_exact(file, &saved, sizeof(saved)) &&
+       saved.magic == WALKPRINT_SETTINGS_MAGIC && saved.version == WALKPRINT_SETTINGS_VERSION) {
+        app->density =
+            (saved.density <= WALKPRINT_DENSITY_MAX) ? saved.density : WALKPRINT_DENSITY_DEFAULT;
+
+        app->font_size = saved.font_size;
+        if(app->font_size < 1U || app->font_size > 10U) {
+            app->font_size = 3U;
+        }
+
+        app->char_spacing = saved.char_spacing;
+        if(app->char_spacing > 10U) {
+            app->char_spacing = 2U;
+        }
+
+        app->font_family =
+            (saved.font_family < (uint8_t)WalkPrintFontFamilyCount) ?
+                (WalkPrintFontFamily)saved.font_family :
+                WalkPrintFontFamilyClassic;
+        app->orientation =
+            (saved.orientation < (uint8_t)WalkPrintOrientationCount) ?
+                (WalkPrintOrientation)saved.orientation :
+                WalkPrintOrientationUpsideDown;
+
+        saved.printer_address[sizeof(saved.printer_address) - 1U] = '\0';
+        saved.compose_message[sizeof(saved.compose_message) - 1U] = '\0';
+        saved.image_path[sizeof(saved.image_path) - 1U] = '\0';
+
+        walkprint_app_copy_text(
+            app->printer_address, sizeof(app->printer_address), saved.printer_address);
+        if(saved.compose_message[0] != '\0') {
+            walkprint_app_copy_text(
+                app->compose_message, sizeof(app->compose_message), saved.compose_message);
+        }
+        if(app->image_path && saved.image_path[0] != '\0') {
+            furi_string_set(app->image_path, saved.image_path);
+        }
+        ok = true;
+    }
+
+    storage_file_close(file);
+    storage_file_free(file);
+    return ok;
+}
+
+static bool walkprint_app_save_settings(WalkPrintApp* app) {
+    File* file;
+    WalkPrintSavedSettings saved;
+    bool ok = false;
+
+    if(!app || !app->storage) {
+        return false;
+    }
+
+    memset(&saved, 0, sizeof(saved));
+    saved.magic = WALKPRINT_SETTINGS_MAGIC;
+    saved.version = WALKPRINT_SETTINGS_VERSION;
+    saved.density = app->density;
+    saved.font_size = app->font_size;
+    saved.char_spacing = app->char_spacing;
+    saved.font_family = (uint8_t)app->font_family;
+    saved.orientation = (uint8_t)app->orientation;
+    walkprint_app_copy_text(
+        saved.printer_address, sizeof(saved.printer_address), app->printer_address);
+    walkprint_app_copy_text(
+        saved.compose_message, sizeof(saved.compose_message), app->compose_message);
+    if(app->image_path) {
+        walkprint_app_copy_text(
+            saved.image_path,
+            sizeof(saved.image_path),
+            furi_string_get_cstr(app->image_path));
+    }
+
+    file = storage_file_alloc(app->storage);
+    if(!file) {
+        return false;
+    }
+
+    if(storage_file_open(file, WALKPRINT_SETTINGS_PATH, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+        ok = walkprint_app_storage_write_exact(file, &saved, sizeof(saved));
+    }
+
+    storage_file_close(file);
+    storage_file_free(file);
+    return ok;
 }
 
 static bool walkprint_app_parse_bmp_header(File* file, WalkPrintBmpInfo* info) {
@@ -646,6 +776,7 @@ bool walkprint_app_select_bmp(WalkPrintApp* app) {
         return false;
     }
 
+    walkprint_app_save_settings(app);
     walkprint_app_set_status(app, "BMP selected", furi_string_get_cstr(app->image_path));
     return true;
 }
@@ -794,6 +925,7 @@ bool walkprint_app_discover_printer(WalkPrintApp* app) {
             app->printer_address,
             sizeof(app->printer_address),
             app->transport.printer_address);
+        walkprint_app_save_settings(app);
     }
 
     walkprint_app_set_status(
@@ -862,7 +994,8 @@ void walkprint_app_adjust_density(WalkPrintApp* app, int8_t delta) {
     }
 
     app->density = (uint8_t)density;
-    walkprint_app_set_status(app, "Density updated", app->printer_address);
+    walkprint_app_save_settings(app);
+    walkprint_app_set_status(app, "Density updated", walkprint_app_printer_address_label(app));
 }
 
 void walkprint_app_adjust_font_size(WalkPrintApp* app, int8_t delta) {
@@ -880,6 +1013,7 @@ void walkprint_app_adjust_font_size(WalkPrintApp* app, int8_t delta) {
     }
 
     app->font_size = (uint8_t)next_size;
+    walkprint_app_save_settings(app);
     walkprint_app_set_status(app, "Font size updated", app->compose_message);
 }
 
@@ -898,6 +1032,7 @@ void walkprint_app_adjust_char_spacing(WalkPrintApp* app, int8_t delta) {
     }
 
     app->char_spacing = (uint8_t)next_spacing;
+    walkprint_app_save_settings(app);
     walkprint_app_set_status(app, "Spacing updated", app->compose_message);
 }
 
@@ -917,6 +1052,7 @@ void walkprint_app_adjust_font_family(WalkPrintApp* app, int8_t delta) {
     }
 
     app->font_family = (WalkPrintFontFamily)next_family;
+    walkprint_app_save_settings(app);
     walkprint_app_set_status(
         app, "Font family updated", walkprint_protocol_font_family_name(app->font_family));
 }
@@ -937,12 +1073,47 @@ void walkprint_app_adjust_orientation(WalkPrintApp* app, int8_t delta) {
     }
 
     app->orientation = (WalkPrintOrientation)next_orientation;
+    walkprint_app_save_settings(app);
     walkprint_app_set_status(
         app, "Orientation updated", walkprint_protocol_orientation_name(app->orientation));
 }
 
 static bool walkprint_app_is_address_separator(size_t index) {
     return index == 2 || index == 5 || index == 8 || index == 11 || index == 14;
+}
+
+bool walkprint_app_has_printer_address(const WalkPrintApp* app) {
+    return app && app->printer_address[0] != '\0';
+}
+
+const char* walkprint_app_printer_address_label(const WalkPrintApp* app) {
+    return walkprint_app_has_printer_address(app) ? app->printer_address : "Unset";
+}
+
+void walkprint_app_begin_address_edit(WalkPrintApp* app) {
+    if(!app) {
+        return;
+    }
+
+    walkprint_app_copy_text(
+        app->address_edit_buffer,
+        sizeof(app->address_edit_buffer),
+        walkprint_app_has_printer_address(app) ? app->printer_address :
+                                                 WALKPRINT_PRINTER_ADDRESS_TEMPLATE);
+    app->address_cursor = 0;
+    app->address_edit_dirty = false;
+}
+
+void walkprint_app_commit_address_edit(WalkPrintApp* app) {
+    if(!app) {
+        return;
+    }
+
+    walkprint_app_copy_text(
+        app->printer_address, sizeof(app->printer_address), app->address_edit_buffer);
+    app->address_edit_dirty = false;
+    walkprint_app_save_settings(app);
+    walkprint_app_reset_transport(app);
 }
 
 void walkprint_app_move_address_cursor(WalkPrintApp* app, int8_t delta) {
@@ -976,13 +1147,12 @@ void walkprint_app_adjust_address_char(WalkPrintApp* app, int8_t delta) {
         return;
     }
 
-    cursor_char = &app->printer_address[app->address_cursor];
+    cursor_char = &app->address_edit_buffer[app->address_cursor];
     found = strchr(hex_chars, *cursor_char);
     current_index = found ? (int)(found - hex_chars) : 0;
     next_index = (current_index + (int)delta + 16) % 16;
     *cursor_char = hex_chars[next_index];
-
-    walkprint_app_reset_transport(app);
+    app->address_edit_dirty = true;
 }
 
 const char* walkprint_app_connection_label(const WalkPrintApp* app) {
@@ -1011,6 +1181,7 @@ static WalkPrintApp* walkprint_app_alloc(void) {
     app->image_path = furi_string_alloc();
 
     walkprint_app_seed_defaults(app);
+    walkprint_app_load_settings(app);
     walkprint_protocol_init(&app->protocol);
 
     view_allocate_model(app->main_view, ViewModelTypeLockFree, sizeof(WalkPrintMainViewModel));
@@ -1039,6 +1210,7 @@ static void walkprint_app_free(WalkPrintApp* app) {
         return;
     }
 
+    walkprint_app_save_settings(app);
     walkprint_transport_disconnect(&app->transport);
 
     if(app->view_dispatcher) {
