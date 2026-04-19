@@ -21,6 +21,7 @@
 #define WALKPRINT_BMP_RASTER_CHUNK_SIZE \
     (WALKPRINT_PRINTER_BITMAP_WIDTH_BYTES * WALKPRINT_BMP_RASTER_CHUNK_ROWS)
 #define WALKPRINT_BMP_THRESHOLD_BASE 128U
+#define WALKPRINT_TEXT_PAGE_BUFFER_SIZE 512U
 
 typedef enum {
     WalkPrintViewMain = 0,
@@ -32,6 +33,7 @@ typedef enum {
     WalkPrintCustomEventDiscoverPrinter,
     WalkPrintCustomEventConnect,
     WalkPrintCustomEventPrintMessage,
+    WalkPrintCustomEventPrintTextFile,
     WalkPrintCustomEventPrintBmp,
     WalkPrintCustomEventFeedPaper,
     WalkPrintCustomEventScanWifi,
@@ -96,6 +98,21 @@ static void walkprint_app_copy_text(char* dst, size_t dst_size, const char* src)
 static bool walkprint_app_load_settings(WalkPrintApp* app);
 static bool walkprint_app_save_settings(WalkPrintApp* app);
 static void walkprint_app_update_led(WalkPrintApp* app);
+static bool walkprint_app_send_message_text(WalkPrintApp* app, const char* message, const char* success_status);
+static bool walkprint_app_load_text_file_contents(
+    WalkPrintApp* app,
+    const char* path,
+    char** buffer_out);
+static size_t walkprint_app_text_chars_per_line(const WalkPrintApp* app);
+static size_t walkprint_app_text_lines_per_page(const WalkPrintApp* app);
+static bool walkprint_app_build_text_page(
+    const char* text,
+    size_t* offset_io,
+    size_t chars_per_line,
+    size_t lines_per_page,
+    char* page_buffer,
+    size_t page_buffer_size,
+    bool* has_more);
 
 static void walkprint_app_queue_busy_action(
     WalkPrintApp* app,
@@ -220,6 +237,9 @@ static bool walkprint_app_handle_custom_event(void* context, uint32_t event) {
     case WalkPrintCustomEventPrintMessage:
         walkprint_app_send_message(app);
         break;
+    case WalkPrintCustomEventPrintTextFile:
+        walkprint_app_send_text_file(app);
+        break;
     case WalkPrintCustomEventPrintBmp:
         walkprint_app_send_bmp(app);
         break;
@@ -332,6 +352,11 @@ void walkprint_app_queue_send_message(WalkPrintApp* app) {
         app, WalkPrintCustomEventPrintMessage, "Printing message", "Rendering custom text");
 }
 
+void walkprint_app_queue_send_text_file(WalkPrintApp* app) {
+    walkprint_app_queue_busy_action(
+        app, WalkPrintCustomEventPrintTextFile, "Printing TXT", "Loading text from SD");
+}
+
 void walkprint_app_queue_send_bmp(WalkPrintApp* app) {
     walkprint_app_queue_busy_action(
         app, WalkPrintCustomEventPrintBmp, "Printing BMP", "Streaming SD bitmap");
@@ -435,7 +460,10 @@ bool walkprint_app_ping_bridge(WalkPrintApp* app) {
     return false;
 }
 
-bool walkprint_app_send_message(WalkPrintApp* app) {
+static bool walkprint_app_send_message_text(
+    WalkPrintApp* app,
+    const char* message,
+    const char* success_status) {
     WalkPrintFrame frame;
 
     if(!app || !walkprint_app_require_connection(app, "Use Connect first")) {
@@ -444,7 +472,7 @@ bool walkprint_app_send_message(WalkPrintApp* app) {
 
     if(!walkprint_protocol_build_message_receipt(
            &app->protocol,
-           app->compose_message,
+           message,
            app->density,
            app->font_size,
            app->font_family,
@@ -486,8 +514,234 @@ bool walkprint_app_send_message(WalkPrintApp* app) {
         return false;
     }
 
-    walkprint_app_set_status(app, "Message printed", app->compose_message);
+    walkprint_app_set_status(app, success_status, message);
     return true;
+}
+
+bool walkprint_app_send_message(WalkPrintApp* app) {
+    if(!app) {
+        return false;
+    }
+
+    return walkprint_app_send_message_text(app, app->compose_message, "Message printed");
+}
+
+static bool walkprint_app_load_text_file_contents(
+    WalkPrintApp* app,
+    const char* path,
+    char** buffer_out) {
+    File* file = NULL;
+    char* buffer = NULL;
+    bool ok = false;
+    size_t buffer_capacity = 0;
+    size_t used = 0;
+    uint8_t chunk[64];
+
+    if(!app || !app->storage || !path || !buffer_out) {
+        return false;
+    }
+
+    *buffer_out = NULL;
+
+    file = storage_file_alloc(app->storage);
+    if(!file) {
+        walkprint_app_set_status(app, "TXT open failed", "File alloc failed");
+        return false;
+    }
+
+    if(!storage_file_open(file, path, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        walkprint_app_set_status(app, "TXT open failed", "Open from SD failed");
+        goto cleanup;
+    }
+
+    buffer_capacity = 256U;
+    buffer = malloc(buffer_capacity);
+    if(!buffer) {
+        walkprint_app_set_status(app, "TXT read failed", "Memory alloc failed");
+        goto cleanup;
+    }
+
+    while(true) {
+        uint16_t read_count = storage_file_read(file, chunk, sizeof(chunk));
+        if(read_count == 0U) {
+            break;
+        }
+
+        for(uint16_t i = 0; i < read_count; i++) {
+            char ch = (char)chunk[i];
+
+            if(ch == '\r') {
+                continue;
+            }
+
+            if(ch == '\t') {
+                ch = ' ';
+            }
+
+            if(((uint8_t)ch < 0x20U) && ch != '\n') {
+                continue;
+            }
+
+            if((uint8_t)ch >= 0x80U) {
+                ch = ' ';
+            }
+
+            if(ch >= 'a' && ch <= 'z') {
+                ch = (char)(ch - 32);
+            }
+
+            if(used + 2U > buffer_capacity) {
+                size_t next_capacity = buffer_capacity * 2U;
+                char* next_buffer = realloc(buffer, next_capacity);
+
+                if(!next_buffer) {
+                    walkprint_app_set_status(app, "TXT read failed", "Out of memory");
+                    goto cleanup;
+                }
+
+                buffer = next_buffer;
+                buffer_capacity = next_capacity;
+            }
+
+            buffer[used++] = ch;
+        }
+    }
+
+    while(used > 0U && (buffer[used - 1U] == '\n' || buffer[used - 1U] == ' ')) {
+        used--;
+    }
+
+    buffer[used] = '\0';
+
+    if(used == 0U) {
+        walkprint_app_set_status(app, "TXT empty", "Choose a text file with content");
+        goto cleanup;
+    }
+
+    *buffer_out = buffer;
+    buffer = NULL;
+    ok = true;
+
+cleanup:
+    free(buffer);
+    if(file) {
+        storage_file_close(file);
+        storage_file_free(file);
+    }
+
+    return ok;
+}
+
+static size_t walkprint_app_text_chars_per_line(const WalkPrintApp* app) {
+    size_t glyph_width;
+
+    if(!app) {
+        return 1U;
+    }
+
+    glyph_width = (5U * app->font_size) + 1U + app->char_spacing;
+    if(glyph_width == 0U) {
+        return 1U;
+    }
+
+    glyph_width = WALKPRINT_PRINTER_BITMAP_WIDTH / glyph_width;
+    return glyph_width > 0U ? glyph_width : 1U;
+}
+
+static size_t walkprint_app_text_lines_per_page(const WalkPrintApp* app) {
+    size_t glyph_height;
+    size_t line_height;
+    size_t y_offset = 2U;
+    size_t lines = 0U;
+
+    if(!app) {
+        return 1U;
+    }
+
+    glyph_height = 7U * app->font_size;
+    line_height = glyph_height + 4U;
+
+    while((y_offset + glyph_height) <= 96U) {
+        lines++;
+        y_offset += line_height;
+    }
+
+    return lines > 0U ? lines : 1U;
+}
+
+static bool walkprint_app_build_text_page(
+    const char* text,
+    size_t* offset_io,
+    size_t chars_per_line,
+    size_t lines_per_page,
+    char* page_buffer,
+    size_t page_buffer_size,
+    bool* has_more) {
+    size_t src;
+    size_t dst = 0U;
+    size_t lines = 0U;
+
+    if(!text || !offset_io || !page_buffer || page_buffer_size < 2U || !has_more) {
+        return false;
+    }
+
+    src = *offset_io;
+    page_buffer[0] = '\0';
+    *has_more = false;
+
+    while(text[src] != '\0' && lines < lines_per_page) {
+        size_t line_chars = 0U;
+
+        while(text[src] == '\n' && lines < lines_per_page) {
+            if(dst + 1U >= page_buffer_size) {
+                break;
+            }
+
+            page_buffer[dst++] = '\n';
+            src++;
+            lines++;
+        }
+
+        if(lines >= lines_per_page || text[src] == '\0') {
+            break;
+        }
+
+        while(text[src] != '\0' && text[src] != '\n' && line_chars < chars_per_line) {
+            if(dst + 1U >= page_buffer_size) {
+                break;
+            }
+
+            page_buffer[dst++] = text[src++];
+            line_chars++;
+        }
+
+        while(text[src] == ' ' && line_chars >= chars_per_line) {
+            src++;
+        }
+
+        if(text[src] == '\n') {
+            src++;
+        }
+
+        lines++;
+        if(lines < lines_per_page && text[src] != '\0') {
+            if(dst + 1U >= page_buffer_size) {
+                break;
+            }
+
+            page_buffer[dst++] = '\n';
+        }
+    }
+
+    while(dst > 0U && page_buffer[dst - 1U] == '\n') {
+        dst--;
+    }
+
+    page_buffer[dst] = '\0';
+    *offset_io = src;
+    *has_more = text[src] != '\0';
+
+    return dst > 0U;
 }
 
 static bool walkprint_app_storage_read_exact(File* file, void* buffer, size_t length) {
@@ -801,6 +1055,95 @@ bool walkprint_app_select_bmp(WalkPrintApp* app) {
     walkprint_app_save_settings(app);
     walkprint_app_set_status(app, "BMP selected", furi_string_get_cstr(app->image_path));
     return true;
+}
+
+bool walkprint_app_select_text_file(WalkPrintApp* app) {
+    DialogsFileBrowserOptions browser_options;
+    bool selected;
+
+    if(!app || !app->dialogs || !app->text_path) {
+        return false;
+    }
+
+    dialog_file_browser_set_basic_options(&browser_options, ".txt", NULL);
+    browser_options.base_path = STORAGE_EXT_PATH_PREFIX;
+    browser_options.skip_assets = true;
+
+    if(furi_string_empty(app->text_path)) {
+        furi_string_set(app->text_path, STORAGE_EXT_PATH_PREFIX);
+    }
+
+    selected = dialog_file_browser_show(app->dialogs, app->text_path, app->text_path, &browser_options);
+    if(!selected) {
+        walkprint_app_set_status(app, "TXT selection canceled", "Choose a .txt file");
+        return false;
+    }
+
+    walkprint_app_set_status(app, "TXT selected", furi_string_get_cstr(app->text_path));
+    return true;
+}
+
+bool walkprint_app_send_text_file(WalkPrintApp* app) {
+    char* file_message = NULL;
+    char page_buffer[WALKPRINT_TEXT_PAGE_BUFFER_SIZE];
+    char detail[WALKPRINT_STATUS_TEXT_SIZE];
+    size_t offset = 0U;
+    size_t chars_per_line;
+    size_t lines_per_page;
+    size_t page_count = 0U;
+    bool has_more = false;
+    bool ok = false;
+
+    if(!app || !app->text_path || furi_string_empty(app->text_path)) {
+        walkprint_app_set_status(app, "TXT not selected", "Choose a .txt file first");
+        return false;
+    }
+
+    if(!walkprint_app_load_text_file_contents(
+           app,
+           furi_string_get_cstr(app->text_path),
+           &file_message)) {
+        return false;
+    }
+
+    chars_per_line = walkprint_app_text_chars_per_line(app);
+    lines_per_page = walkprint_app_text_lines_per_page(app);
+
+    while(walkprint_app_build_text_page(
+        file_message,
+        &offset,
+        chars_per_line,
+        lines_per_page,
+        page_buffer,
+        sizeof(page_buffer),
+        &has_more)) {
+        page_count++;
+
+        if(!walkprint_app_send_message_text(app, page_buffer, "TXT page printed")) {
+            goto cleanup;
+        }
+
+        if(!has_more) {
+            ok = true;
+            break;
+        }
+    }
+
+    if(ok) {
+        snprintf(
+            detail,
+            sizeof(detail),
+            "%u page%s",
+            (unsigned)page_count,
+            page_count == 1U ? "" : "s");
+        walkprint_app_set_status(app, "TXT printed", detail);
+    } else if(page_count == 0U) {
+        walkprint_app_set_status(app, "TXT empty", "No printable text found");
+    }
+
+cleanup:
+    free(file_message);
+    return ok;
 }
 
 bool walkprint_app_send_bmp(WalkPrintApp* app) {
@@ -1202,6 +1545,7 @@ static WalkPrintApp* walkprint_app_alloc(void) {
     app->main_view = view_alloc();
     app->text_input = text_input_alloc();
     app->image_path = furi_string_alloc();
+    app->text_path = furi_string_alloc();
 
     walkprint_app_seed_defaults(app);
     walkprint_app_load_settings(app);
@@ -1246,6 +1590,10 @@ static void walkprint_app_free(WalkPrintApp* app) {
     }
     if(app->image_path) {
         furi_string_free(app->image_path);
+    }
+
+    if(app->text_path) {
+        furi_string_free(app->text_path);
     }
     if(app->main_view) {
         view_free(app->main_view);

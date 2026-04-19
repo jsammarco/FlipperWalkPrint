@@ -21,8 +21,23 @@ typedef struct {
 
 static const WalkPrintGlyph walkprint_test_font[] = {
     {' ', {0x00, 0x00, 0x00, 0x00, 0x00}},
+    {'!', {0x00, 0x00, 0x5F, 0x00, 0x00}},
+    {'"', {0x00, 0x07, 0x00, 0x07, 0x00}},
+    {'$', {0x24, 0x2A, 0x7F, 0x2A, 0x12}},
+    {'\'', {0x00, 0x03, 0x07, 0x00, 0x00}},
+    {'(', {0x00, 0x1C, 0x22, 0x41, 0x00}},
+    {')', {0x00, 0x41, 0x22, 0x1C, 0x00}},
+    {'*', {0x14, 0x08, 0x3E, 0x08, 0x14}},
+    {'+', {0x08, 0x08, 0x3E, 0x08, 0x08}},
+    {',', {0x00, 0x40, 0x20, 0x00, 0x00}},
     {'-', {0x08, 0x08, 0x08, 0x08, 0x08}},
+    {'.', {0x00, 0x60, 0x60, 0x00, 0x00}},
+    {'/', {0x20, 0x10, 0x08, 0x04, 0x02}},
     {':', {0x00, 0x36, 0x36, 0x00, 0x00}},
+    {'=', {0x14, 0x14, 0x14, 0x14, 0x14}},
+    {'?', {0x02, 0x01, 0x51, 0x09, 0x06}},
+    {'_', {0x40, 0x40, 0x40, 0x40, 0x40}},
+    {'\\', {0x02, 0x04, 0x08, 0x10, 0x20}},
     {'0', {0x3E, 0x51, 0x49, 0x45, 0x3E}},
     {'1', {0x00, 0x42, 0x7F, 0x40, 0x00}},
     {'2', {0x42, 0x61, 0x51, 0x49, 0x46}},
@@ -215,6 +230,53 @@ static void walkprint_protocol_draw_text_line(
     }
 }
 
+static void walkprint_protocol_draw_text_block(
+    uint8_t* raster,
+    const char* text,
+    uint8_t font_scale,
+    WalkPrintFontFamily family,
+    uint8_t char_spacing,
+    WalkPrintOrientation orientation) {
+    size_t line_start = 0;
+    size_t y_offset = 2U;
+    const size_t text_length = text ? strlen(text) : 0U;
+    const size_t line_height = (WALKPRINT_TEST_FONT_HEIGHT * font_scale) + 4U;
+
+    if(!raster || !text || line_height == 0U) {
+        return;
+    }
+
+    for(size_t i = 0; i <= text_length; i++) {
+        if(text[i] == '\n' || text[i] == '\0') {
+            char line_buffer[257];
+            size_t line_length = i - line_start;
+
+            if(line_length >= sizeof(line_buffer)) {
+                line_length = sizeof(line_buffer) - 1U;
+            }
+
+            memcpy(line_buffer, &text[line_start], line_length);
+            line_buffer[line_length] = '\0';
+
+            if(y_offset + (WALKPRINT_TEST_FONT_HEIGHT * font_scale) > WALKPRINT_TEST_BITMAP_HEIGHT) {
+                break;
+            }
+
+            walkprint_protocol_draw_text_line(
+                raster,
+                y_offset,
+                line_buffer,
+                font_scale,
+                family,
+                char_spacing,
+                orientation);
+
+            y_offset += line_height;
+            line_start = i + 1U;
+        }
+    }
+}
+
 static bool walkprint_protocol_build_bitmap_receipt(
     const char* message,
     bool include_density_line,
@@ -248,9 +310,8 @@ static bool walkprint_protocol_build_bitmap_receipt(
     walkprint_protocol_reset_frame(out_frame);
     memset(walkprint_test_raster_buffer, 0, sizeof(walkprint_test_raster_buffer));
 
-    walkprint_protocol_draw_text_line(
+    walkprint_protocol_draw_text_block(
         walkprint_test_raster_buffer,
-        2U,
         message,
         clamped_scale,
         font_family,

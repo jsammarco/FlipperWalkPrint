@@ -13,7 +13,7 @@ The build scripts prefer your local Momentum firmware checkout when it is presen
 ## Current State
 
 - The Flipper app builds cleanly against Momentum and outputs [dist/walkprint.fap](/C:/Users/jasammarco.ENG/Projects/WalkPrint/dist/walkprint.fap).
-- The app UI now includes printer discovery, Wi-Fi scan, configurable message font size/family settings, and BMP printing from the SD card.
+- The app UI now includes printer discovery, Wi-Fi scan, configurable message font size/family settings, `.txt` printing from the SD card, and BMP printing from the SD card.
 - The live transport in [walkprint_transport_live.c](/C:/Users/jasammarco.ENG/Projects/WalkPrint/walkprint_transport_live.c) uses Flipper header pins `13/14` (`PB6/PB7`) at `115200`.
 - The ESP32 bridge sketch lives at [esp32_bridge/walkprint_esp32_bridge/walkprint_esp32_bridge.ino](/C:/Users/jasammarco.ENG/Projects/WalkPrint/esp32_bridge/walkprint_esp32_bridge/walkprint_esp32_bridge.ino).
 - A desktop bridge also still exists under [bridge/README.md](/C:/Users/jasammarco.ENG/Projects/WalkPrint/bridge/README.md) if you want a PC-side fallback, including image conversion and image printing helpers.
@@ -127,9 +127,9 @@ qFlipper CLI:
 
 - Discover Printer
 - Connect
-- Print Test Receipt
+- Print Message
+- Print TXT
 - Print BMP
-- Send Raw Frame
 - Feed Paper
 - WiFi Scan
 - Settings
@@ -144,6 +144,7 @@ The app now shows:
 - the selected font family
 - the latest bridge discovery or Wi-Fi scan result
 - BMP print status for `.bmp` files selected from storage
+- TXT print status for `.txt` files selected from storage
 - persisted settings after the app closes, including printer MAC, message, BMP path, and print options
 
 The desktop bridge now adds:
@@ -155,7 +156,9 @@ The desktop bridge now adds:
 
 ## Notes
 
-- The Flipper app does not open Classic Bluetooth directly; it delegates that work to the ESP32.
-- On-device BMP printing expects a `.bmp` file on the Flipper SD card that is exactly `384px` wide; other widths are rejected.
-- I verified the Flipper app build locally, but I could not compile the Arduino sketch in this workspace because `arduino-cli` is not installed here.
-- If you later want richer bridge behavior, the next easy additions are printer status polling, Wi-Fi connect commands, and multi-device BT scan result paging.
+- The Flipper talks to the printer through the ESP32 bridge over UART; it does not open the printer's Classic Bluetooth link on its own.
+- `Print TXT` reads a `.txt` file from the Flipper SD card, keeps line breaks, and prints it across as many text pages as needed.
+- The built-in text renderer is best for standard printable ASCII. If a text file uses Unicode art, block characters, or other extended symbols, convert it to an image and use `Print BMP` instead.
+- `Print BMP` expects a `.bmp` file on the Flipper SD card that is exactly `384px` wide. Files with other widths are rejected by the app.
+- The Flipper app build was verified locally in this workspace. The Arduino bridge sketch was not compiled here because `arduino-cli` is not installed.
+- Good next additions for the bridge would be printer status polling, Wi-Fi connect commands, and better paging for larger Bluetooth scan results.
