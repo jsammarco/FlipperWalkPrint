@@ -14,7 +14,7 @@ The build scripts prefer your local Momentum firmware checkout when it is presen
 
 - The Flipper app builds cleanly against Momentum and outputs [dist/walkprint.fap](/C:/Users/jasammarco.ENG/Projects/WalkPrint/dist/walkprint.fap).
 - The app UI now includes printer discovery, Wi-Fi scan, configurable message font size/family settings, `.txt` printing from the SD card, and BMP printing from the SD card.
-- The live transport in [walkprint_transport_live.c](/C:/Users/jasammarco.ENG/Projects/WalkPrint/walkprint_transport_live.c) uses Flipper header pins `13/14` (`PB6/PB7`) at `115200`.
+- The live transport in [walkprint_transport_live.c](https://github.com/jsammarco/FlipperWalkPrint/blob/main/walkprint_transport_live.c) uses Flipper header pins `13/14` (`PB6/PB7`) at `115200`.
 - The ESP32 bridge sketch lives at [esp32_bridge/walkprint_esp32_bridge/walkprint_esp32_bridge.ino](https://github.com/jsammarco/FlipperWalkPrint/blob/main/esp32_bridge/walkprint_esp32_bridge/walkprint_esp32_bridge.ino).
 - The optional WalkPrint Bridge is a PC-side Python script under `bridge/` for desktop helpers like image conversion and direct PC printing. It is not required for the Flipper Zero app.
 
@@ -160,5 +160,5 @@ The desktop bridge now adds:
 - `Print TXT` reads a `.txt` file from the Flipper SD card, keeps line breaks, and prints it across as many text pages as needed. While a multi-page TXT job is running, `Back` cancels after the current page finishes.
 - The built-in text renderer is best for standard printable ASCII. If a text file uses Unicode art, block characters, or other extended symbols, convert it to an image and use `Print BMP` instead.
 - `Print BMP` expects a `.bmp` file on the Flipper SD card that is exactly `384px` wide. Files with other widths are rejected by the app.
-- The Flipper app build was verified locally in this workspace. The Arduino bridge sketch was not compiled here because `arduino-cli` is not installed.
+- Use the Arduino IDE to compile and upload the ESP32 bridge sketch, and make sure the partition option matches the included `partitions.csv` setup.
 - Good next additions for the bridge would be printer status polling, Wi-Fi connect commands, and better paging for larger Bluetooth scan results.
