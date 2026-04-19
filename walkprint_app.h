@@ -5,11 +5,13 @@
 #include "walkprint_transport.h"
 
 #include <furi.h>
+#include <dialogs/dialogs.h>
 #include <gui/gui.h>
 #include <gui/view.h>
 #include <gui/view_dispatcher.h>
 #include <gui/modules/text_input.h>
 #include <input/input.h>
+#include <storage/storage.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -27,9 +29,12 @@ typedef enum {
 
 typedef struct {
     Gui* gui;
+    DialogsApp* dialogs;
+    Storage* storage;
     ViewDispatcher* view_dispatcher;
     View* main_view;
     TextInput* text_input;
+    FuriString* image_path;
     WalkPrintProtocol protocol;
     WalkPrintTransport transport;
     WalkPrintScreen screen;
@@ -59,6 +64,7 @@ void walkprint_app_queue_ping_bridge(WalkPrintApp* app);
 void walkprint_app_queue_discover_printer(WalkPrintApp* app);
 void walkprint_app_queue_connect(WalkPrintApp* app);
 void walkprint_app_queue_send_message(WalkPrintApp* app);
+void walkprint_app_queue_send_bmp(WalkPrintApp* app);
 void walkprint_app_queue_send_feed(WalkPrintApp* app);
 void walkprint_app_queue_scan_wifi(WalkPrintApp* app);
 void walkprint_app_reset_transport(WalkPrintApp* app);
@@ -66,6 +72,8 @@ bool walkprint_app_connect(WalkPrintApp* app);
 void walkprint_app_disconnect(WalkPrintApp* app);
 bool walkprint_app_ping_bridge(WalkPrintApp* app);
 bool walkprint_app_send_message(WalkPrintApp* app);
+bool walkprint_app_select_bmp(WalkPrintApp* app);
+bool walkprint_app_send_bmp(WalkPrintApp* app);
 bool walkprint_app_send_feed(WalkPrintApp* app);
 bool walkprint_app_discover_printer(WalkPrintApp* app);
 bool walkprint_app_scan_wifi(WalkPrintApp* app);

@@ -17,6 +17,8 @@ App(
     ],
     requires=[
         "gui",
+        "dialogs",
+        "storage",
     ],
     targets=[
         "f7",

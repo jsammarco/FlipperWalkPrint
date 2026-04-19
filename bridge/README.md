@@ -52,6 +52,8 @@ This converts the image to monochrome printer raster bytes and saves the exact p
 python bridge/walkprint_bridge.py image .\photo.png --address 25:00:35:00:03:57 --preview .\bridge\out\photo-preview.png
 ```
 
+The bridge targets a `384` pixel print width by default and automatically resizes images that are not already `384` pixels wide.
+
 Useful options:
 
 - `--width 384` to control the target width in printer pixels
@@ -65,7 +67,13 @@ Useful options:
 .\bridge\send_image.ps1 -Address 25:00:35:00:03:57
 ```
 
-This opens a file picker, lets you choose an image, then sends it through the bridge.
+This opens a file picker, lets you choose an image, resizes it to `384` pixels wide when needed, then sends it through the bridge.
+
+To pick only bitmap files:
+
+```powershell
+.\bridge\send_image.ps1 -BmpOnly -Address 25:00:35:00:03:57
+```
 
 ## Notes
 

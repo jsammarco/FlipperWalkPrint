@@ -3,9 +3,20 @@
 #include "app_ui.h"
 #include "walkprint_debug.h"
 
+#include <dialogs/dialogs.h>
+#include <storage/storage.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define WALKPRINT_BMP_MAGIC 0x4D42U
+#define WALKPRINT_PRINTER_BITMAP_WIDTH 384U
+#define WALKPRINT_PRINTER_BITMAP_WIDTH_BYTES (WALKPRINT_PRINTER_BITMAP_WIDTH / 8U)
+#define WALKPRINT_BMP_MAX_ROW_SIZE (WALKPRINT_PRINTER_BITMAP_WIDTH * 4U)
+#define WALKPRINT_BMP_RASTER_CHUNK_ROWS 20U
+#define WALKPRINT_BMP_RASTER_CHUNK_SIZE \
+    (WALKPRINT_PRINTER_BITMAP_WIDTH_BYTES * WALKPRINT_BMP_RASTER_CHUNK_ROWS)
 
 typedef enum {
     WalkPrintViewMain = 0,
@@ -17,6 +28,7 @@ typedef enum {
     WalkPrintCustomEventDiscoverPrinter,
     WalkPrintCustomEventConnect,
     WalkPrintCustomEventPrintMessage,
+    WalkPrintCustomEventPrintBmp,
     WalkPrintCustomEventFeedPaper,
     WalkPrintCustomEventScanWifi,
 } WalkPrintCustomEvent;
@@ -24,6 +36,32 @@ typedef enum {
 typedef struct {
     WalkPrintApp* app;
 } WalkPrintMainViewModel;
+
+typedef struct {
+    uint32_t pixel_data_offset;
+    uint32_t dib_size;
+    uint32_t width;
+    uint32_t height;
+    uint32_t row_stride;
+    uint16_t bits_per_pixel;
+    uint16_t planes;
+    uint32_t compression;
+    uint32_t colors_used;
+    bool top_down;
+} WalkPrintBmpInfo;
+
+static uint16_t walkprint_app_read_le16(const uint8_t* bytes) {
+    return (uint16_t)bytes[0] | ((uint16_t)bytes[1] << 8U);
+}
+
+static uint32_t walkprint_app_read_le32(const uint8_t* bytes) {
+    return (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8U) | ((uint32_t)bytes[2] << 16U) |
+           ((uint32_t)bytes[3] << 24U);
+}
+
+static int32_t walkprint_app_read_le32_signed(const uint8_t* bytes) {
+    return (int32_t)walkprint_app_read_le32(bytes);
+}
 
 static void walkprint_app_copy_text(char* dst, size_t dst_size, const char* src) {
     if(!dst || dst_size == 0) {
@@ -86,6 +124,9 @@ static void walkprint_app_seed_defaults(WalkPrintApp* app) {
         WALKPRINT_RAW_FRAME_LEN,
         app->raw_frame_preview,
         sizeof(app->raw_frame_preview));
+    if(app->image_path) {
+        furi_string_set(app->image_path, STORAGE_EXT_PATH_PREFIX);
+    }
     walkprint_app_set_status(app, "Ready", "ESP32 bridge target");
 }
 
@@ -145,6 +186,9 @@ static bool walkprint_app_handle_custom_event(void* context, uint32_t event) {
         break;
     case WalkPrintCustomEventPrintMessage:
         walkprint_app_send_message(app);
+        break;
+    case WalkPrintCustomEventPrintBmp:
+        walkprint_app_send_bmp(app);
         break;
     case WalkPrintCustomEventFeedPaper:
         walkprint_app_send_feed(app);
@@ -253,6 +297,11 @@ void walkprint_app_queue_connect(WalkPrintApp* app) {
 void walkprint_app_queue_send_message(WalkPrintApp* app) {
     walkprint_app_queue_busy_action(
         app, WalkPrintCustomEventPrintMessage, "Printing message", "Rendering custom text");
+}
+
+void walkprint_app_queue_send_bmp(WalkPrintApp* app) {
+    walkprint_app_queue_busy_action(
+        app, WalkPrintCustomEventPrintBmp, "Printing BMP", "Streaming SD bitmap");
 }
 
 void walkprint_app_queue_send_feed(WalkPrintApp* app) {
@@ -392,6 +441,324 @@ bool walkprint_app_send_message(WalkPrintApp* app) {
 
     walkprint_app_set_status(app, "Message printed", app->compose_message);
     return true;
+}
+
+static bool walkprint_app_storage_read_exact(File* file, void* buffer, size_t length) {
+    return file && buffer && storage_file_read(file, buffer, length) == length;
+}
+
+static bool walkprint_app_parse_bmp_header(File* file, WalkPrintBmpInfo* info) {
+    uint8_t file_header[14];
+    uint8_t dib_prefix[40];
+    int32_t signed_width;
+    int32_t signed_height;
+    uint32_t abs_height;
+
+    if(!file || !info) {
+        return false;
+    }
+
+    memset(info, 0, sizeof(*info));
+
+    if(!walkprint_app_storage_read_exact(file, file_header, sizeof(file_header))) {
+        return false;
+    }
+
+    if(walkprint_app_read_le16(file_header) != WALKPRINT_BMP_MAGIC) {
+        return false;
+    }
+
+    info->pixel_data_offset = walkprint_app_read_le32(&file_header[10]);
+    if(!walkprint_app_storage_read_exact(file, dib_prefix, sizeof(dib_prefix))) {
+        return false;
+    }
+
+    info->dib_size = walkprint_app_read_le32(&dib_prefix[0]);
+    if(info->dib_size < sizeof(dib_prefix)) {
+        return false;
+    }
+
+    signed_width = walkprint_app_read_le32_signed(&dib_prefix[4]);
+    signed_height = walkprint_app_read_le32_signed(&dib_prefix[8]);
+    info->planes = walkprint_app_read_le16(&dib_prefix[12]);
+    info->bits_per_pixel = walkprint_app_read_le16(&dib_prefix[14]);
+    info->compression = walkprint_app_read_le32(&dib_prefix[16]);
+    info->colors_used = walkprint_app_read_le32(&dib_prefix[32]);
+
+    if(signed_width <= 0 || signed_height == 0 || info->planes != 1U) {
+        return false;
+    }
+
+    abs_height = (signed_height < 0) ? (uint32_t)(-signed_height) : (uint32_t)signed_height;
+    info->width = (uint32_t)signed_width;
+    info->height = abs_height;
+    info->top_down = signed_height < 0;
+    info->row_stride = (((uint32_t)info->bits_per_pixel * info->width) + 31U) / 32U * 4U;
+
+    return true;
+}
+
+static void walkprint_app_palette_luma(uint8_t* palette_luma, const uint8_t* palette, size_t count) {
+    for(size_t i = 0; i < count; i++) {
+        const uint8_t blue = palette[(i * 4U) + 0U];
+        const uint8_t green = palette[(i * 4U) + 1U];
+        const uint8_t red = palette[(i * 4U) + 2U];
+        palette_luma[i] = (uint8_t)((red * 30U + green * 59U + blue * 11U) / 100U);
+    }
+}
+
+static uint8_t walkprint_app_pixel_luma(
+    const uint8_t* row,
+    size_t x,
+    const WalkPrintBmpInfo* info,
+    const uint8_t* palette_luma) {
+    if(info->bits_per_pixel == 32U) {
+        const uint8_t blue = row[x * 4U];
+        const uint8_t green = row[x * 4U + 1U];
+        const uint8_t red = row[x * 4U + 2U];
+        const uint8_t alpha = row[x * 4U + 3U];
+        const uint8_t luma = (uint8_t)((red * 30U + green * 59U + blue * 11U) / 100U);
+        return (uint8_t)((luma * alpha + 255U * (255U - alpha)) / 255U);
+    }
+
+    if(info->bits_per_pixel == 24U) {
+        const uint8_t blue = row[x * 3U];
+        const uint8_t green = row[x * 3U + 1U];
+        const uint8_t red = row[x * 3U + 2U];
+        return (uint8_t)((red * 30U + green * 59U + blue * 11U) / 100U);
+    }
+
+    if(info->bits_per_pixel == 8U) {
+        return palette_luma[row[x]];
+    }
+
+    if(info->bits_per_pixel == 1U) {
+        const uint8_t byte = row[x / 8U];
+        const uint8_t bit = (uint8_t)((byte >> (7U - (x % 8U))) & 0x01U);
+        return palette_luma[bit];
+    }
+
+    return 255U;
+}
+
+static bool walkprint_app_prepare_bmp_file(
+    WalkPrintApp* app,
+    File* file,
+    WalkPrintBmpInfo* info,
+    uint8_t* palette_luma,
+    size_t palette_capacity) {
+    uint32_t palette_entries = 0;
+    uint8_t palette_raw[256U * 4U];
+
+    if(!app || !file || !info) {
+        return false;
+    }
+
+    if(!walkprint_app_parse_bmp_header(file, info)) {
+        walkprint_app_set_status(app, "BMP read failed", "Invalid BMP header");
+        return false;
+    }
+
+    if(info->width != WALKPRINT_PRINTER_BITMAP_WIDTH) {
+        walkprint_app_set_status(app, "BMP width invalid", "BMP must be 384px wide");
+        return false;
+    }
+
+    if(info->compression != 0U) {
+        walkprint_app_set_status(app, "BMP unsupported", "Only uncompressed BMP works");
+        return false;
+    }
+
+    if(info->bits_per_pixel != 1U && info->bits_per_pixel != 8U && info->bits_per_pixel != 24U &&
+       info->bits_per_pixel != 32U) {
+        walkprint_app_set_status(app, "BMP unsupported", "Use 1/8/24/32-bit BMP");
+        return false;
+    }
+
+    if(info->bits_per_pixel <= 8U) {
+        palette_entries = info->colors_used;
+        if(palette_entries == 0U) {
+            palette_entries = 1UL << info->bits_per_pixel;
+        }
+        if(palette_entries > 256U || palette_entries > palette_capacity) {
+            walkprint_app_set_status(app, "BMP unsupported", "Palette too large");
+            return false;
+        }
+
+        if(!walkprint_app_storage_read_exact(file, palette_raw, palette_entries * 4U)) {
+            walkprint_app_set_status(app, "BMP read failed", "Palette read failed");
+            return false;
+        }
+
+        walkprint_app_palette_luma(palette_luma, palette_raw, palette_entries);
+    }
+
+    return true;
+}
+
+static bool walkprint_app_flush_raster_chunk(
+    WalkPrintApp* app,
+    uint8_t* raster_chunk,
+    size_t* raster_chunk_length) {
+    if(!app || !raster_chunk || !raster_chunk_length) {
+        return false;
+    }
+
+    if(*raster_chunk_length == 0U) {
+        return true;
+    }
+
+    if(!walkprint_transport_send(&app->transport, raster_chunk, *raster_chunk_length)) {
+        walkprint_app_set_status(app, "Print failed", app->transport.last_response);
+        return false;
+    }
+
+    *raster_chunk_length = 0U;
+    return true;
+}
+
+bool walkprint_app_select_bmp(WalkPrintApp* app) {
+    DialogsFileBrowserOptions browser_options;
+    bool selected;
+
+    if(!app || !app->dialogs || !app->image_path) {
+        return false;
+    }
+
+    dialog_file_browser_set_basic_options(&browser_options, ".bmp", NULL);
+    browser_options.base_path = STORAGE_EXT_PATH_PREFIX;
+    browser_options.skip_assets = true;
+
+    if(furi_string_empty(app->image_path)) {
+        furi_string_set(app->image_path, STORAGE_EXT_PATH_PREFIX);
+    }
+
+    selected = dialog_file_browser_show(app->dialogs, app->image_path, app->image_path, &browser_options);
+    if(!selected) {
+        walkprint_app_set_status(app, "BMP selection canceled", "Choose a 384px BMP");
+        return false;
+    }
+
+    walkprint_app_set_status(app, "BMP selected", furi_string_get_cstr(app->image_path));
+    return true;
+}
+
+bool walkprint_app_send_bmp(WalkPrintApp* app) {
+    WalkPrintBmpInfo info;
+    File* file = NULL;
+    bool ok = false;
+    uint8_t palette_luma[256];
+    uint8_t row_buffer[WALKPRINT_BMP_MAX_ROW_SIZE];
+    uint8_t raster_row[WALKPRINT_PRINTER_BITMAP_WIDTH_BYTES];
+    uint8_t raster_chunk[WALKPRINT_BMP_RASTER_CHUNK_SIZE];
+    size_t raster_chunk_length = 0;
+    uint8_t image_header[8];
+
+    if(!app || !app->storage || !app->image_path || furi_string_empty(app->image_path)) {
+        return false;
+    }
+
+    if(!walkprint_app_require_connection(app, "Use Connect first")) {
+        return false;
+    }
+
+    file = storage_file_alloc(app->storage);
+    if(!file) {
+        walkprint_app_set_status(app, "BMP open failed", "File alloc failed");
+        return false;
+    }
+
+    if(!storage_file_open(file, furi_string_get_cstr(app->image_path), FSAM_READ, FSOM_OPEN_EXISTING)) {
+        walkprint_app_set_status(app, "BMP open failed", "Open from SD failed");
+        goto cleanup;
+    }
+
+    if(!walkprint_app_prepare_bmp_file(app, file, &info, palette_luma, sizeof(palette_luma))) {
+        goto cleanup;
+    }
+
+    image_header[0] = 0x1D;
+    image_header[1] = 0x76;
+    image_header[2] = 0x30;
+    image_header[3] = 0x00;
+    image_header[4] = (uint8_t)(WALKPRINT_PRINTER_BITMAP_WIDTH_BYTES & 0xFFU);
+    image_header[5] = (uint8_t)((WALKPRINT_PRINTER_BITMAP_WIDTH_BYTES >> 8U) & 0xFFU);
+    image_header[6] = (uint8_t)(info.height & 0xFFU);
+    image_header[7] = (uint8_t)((info.height >> 8U) & 0xFFU);
+
+    if(!walkprint_transport_send(&app->transport, walkprint_config_init_frame, WALKPRINT_INIT_FRAME_LEN)) {
+        walkprint_app_set_status(app, "Print failed", app->transport.last_response);
+        goto cleanup;
+    }
+
+    furi_delay_ms(100);
+
+    if(!walkprint_transport_send(
+           &app->transport, walkprint_config_start_print_frame, WALKPRINT_START_PRINT_FRAME_LEN)) {
+        walkprint_app_set_status(app, "Print failed", app->transport.last_response);
+        goto cleanup;
+    }
+
+    furi_delay_ms(50);
+
+    if(!walkprint_transport_send(&app->transport, image_header, sizeof(image_header))) {
+        walkprint_app_set_status(app, "Print failed", app->transport.last_response);
+        goto cleanup;
+    }
+
+    for(uint32_t row = 0; row < info.height; row++) {
+        uint32_t bmp_row = info.top_down ? row : (info.height - 1U - row);
+        uint32_t row_offset = info.pixel_data_offset + (bmp_row * info.row_stride);
+
+        if(!storage_file_seek(file, row_offset, true)) {
+            walkprint_app_set_status(app, "BMP read failed", "Seek failed");
+            goto cleanup;
+        }
+
+        if(storage_file_read(file, row_buffer, info.row_stride) != info.row_stride) {
+            walkprint_app_set_status(app, "BMP read failed", "Row read failed");
+            goto cleanup;
+        }
+
+        memset(raster_row, 0, sizeof(raster_row));
+        for(uint32_t x = 0; x < WALKPRINT_PRINTER_BITMAP_WIDTH; x++) {
+            uint8_t luma = walkprint_app_pixel_luma(row_buffer, x, &info, palette_luma);
+            if(luma < 128U) {
+                raster_row[x / 8U] |= (uint8_t)(1U << (7U - (x % 8U)));
+            }
+        }
+
+        memcpy(raster_chunk + raster_chunk_length, raster_row, sizeof(raster_row));
+        raster_chunk_length += sizeof(raster_row);
+
+        if(raster_chunk_length >= sizeof(raster_chunk) &&
+           !walkprint_app_flush_raster_chunk(app, raster_chunk, &raster_chunk_length)) {
+            goto cleanup;
+        }
+    }
+
+    if(!walkprint_app_flush_raster_chunk(app, raster_chunk, &raster_chunk_length)) {
+        goto cleanup;
+    }
+
+    furi_delay_ms(50);
+
+    if(!walkprint_transport_send(
+           &app->transport, walkprint_config_end_print_frame, WALKPRINT_END_PRINT_FRAME_LEN)) {
+        walkprint_app_set_status(app, "Print failed", app->transport.last_response);
+        goto cleanup;
+    }
+
+    walkprint_app_set_status(app, "BMP printed", furi_string_get_cstr(app->image_path));
+    ok = true;
+
+cleanup:
+    if(file) {
+        storage_file_close(file);
+        storage_file_free(file);
+    }
+
+    return ok;
 }
 
 bool walkprint_app_discover_printer(WalkPrintApp* app) {
@@ -625,13 +992,16 @@ static WalkPrintApp* walkprint_app_alloc(void) {
     }
 
     memset(app, 0, sizeof(WalkPrintApp));
-    walkprint_app_seed_defaults(app);
-    walkprint_protocol_init(&app->protocol);
-
     app->gui = furi_record_open(RECORD_GUI);
+    app->dialogs = furi_record_open(RECORD_DIALOGS);
+    app->storage = furi_record_open(RECORD_STORAGE);
     app->view_dispatcher = view_dispatcher_alloc();
     app->main_view = view_alloc();
     app->text_input = text_input_alloc();
+    app->image_path = furi_string_alloc();
+
+    walkprint_app_seed_defaults(app);
+    walkprint_protocol_init(&app->protocol);
 
     view_allocate_model(app->main_view, ViewModelTypeLockFree, sizeof(WalkPrintMainViewModel));
     model = view_get_model(app->main_view);
@@ -668,6 +1038,9 @@ static void walkprint_app_free(WalkPrintApp* app) {
     if(app->text_input) {
         text_input_free(app->text_input);
     }
+    if(app->image_path) {
+        furi_string_free(app->image_path);
+    }
     if(app->main_view) {
         view_free(app->main_view);
     }
@@ -676,6 +1049,12 @@ static void walkprint_app_free(WalkPrintApp* app) {
     }
     if(app->gui) {
         furi_record_close(RECORD_GUI);
+    }
+    if(app->dialogs) {
+        furi_record_close(RECORD_DIALOGS);
+    }
+    if(app->storage) {
+        furi_record_close(RECORD_STORAGE);
     }
 
     free(app);

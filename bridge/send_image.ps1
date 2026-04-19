@@ -4,6 +4,7 @@ param(
     [string]$Address = "25:00:35:00:03:57",
     [Nullable[int]]$Channel = $null,
     [int]$Width = 384,
+    [switch]$BmpOnly,
     [ValidateSet("floyd-steinberg", "threshold")]
     [string]$Dither = "floyd-steinberg",
     [int]$Threshold = 160,
@@ -14,8 +15,12 @@ param(
 Add-Type -AssemblyName System.Windows.Forms
 
 $dialog = New-Object System.Windows.Forms.OpenFileDialog
-$dialog.Title = "Select an image to print"
-$dialog.Filter = "Image Files|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp|All Files|*.*"
+$dialog.Title = if($BmpOnly) { "Select a BMP image to print" } else { "Select an image to print" }
+$dialog.Filter = if($BmpOnly) {
+    "Bitmap Files|*.bmp|All Files|*.*"
+} else {
+    "Image Files|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp|All Files|*.*"
+}
 $dialog.Multiselect = $false
 
 if($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {

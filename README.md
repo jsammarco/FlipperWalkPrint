@@ -13,7 +13,7 @@ The build scripts prefer your local Momentum firmware checkout when it is presen
 ## Current State
 
 - The Flipper app builds cleanly against Momentum and outputs [dist/walkprint.fap](/C:/Users/jasammarco.ENG/Projects/WalkPrint/dist/walkprint.fap).
-- The app UI now includes printer discovery, Wi-Fi scan, and configurable message font size/family settings.
+- The app UI now includes printer discovery, Wi-Fi scan, configurable message font size/family settings, and BMP printing from the SD card.
 - The live transport in [walkprint_transport_live.c](/C:/Users/jasammarco.ENG/Projects/WalkPrint/walkprint_transport_live.c) uses Flipper header pins `13/14` (`PB6/PB7`) at `115200`.
 - The ESP32 bridge sketch lives at [esp32_bridge/walkprint_esp32_bridge/walkprint_esp32_bridge.ino](/C:/Users/jasammarco.ENG/Projects/WalkPrint/esp32_bridge/walkprint_esp32_bridge/walkprint_esp32_bridge.ino).
 - A desktop bridge also still exists under [bridge/README.md](/C:/Users/jasammarco.ENG/Projects/WalkPrint/bridge/README.md) if you want a PC-side fallback, including image conversion and image printing helpers.
@@ -129,6 +129,7 @@ qFlipper CLI:
 - Discover Printer
 - Connect
 - Print Test Receipt
+- Print BMP
 - Send Raw Frame
 - Feed Paper
 - WiFi Scan
@@ -143,15 +144,18 @@ The app now shows:
 - the configured font size from `1-10`
 - the selected font family
 - the latest bridge discovery or Wi-Fi scan result
+- BMP print status for `.bmp` files selected from storage
 
 The desktop bridge now adds:
 
 - `python bridge/walkprint_bridge.py image <path>` to send an image directly
 - `python bridge/walkprint_bridge.py convert-image <path>` to generate the printer payload without sending
 - `.\bridge\send_image.ps1` to select an image with a Windows file picker and send it
+- `.\bridge\send_image.ps1 -BmpOnly` to pick only `.bmp` files and send them at the default `384px` print width
 
 ## Notes
 
 - The Flipper app does not open Classic Bluetooth directly; it delegates that work to the ESP32.
+- On-device BMP printing expects a `.bmp` file on the Flipper SD card that is exactly `384px` wide; other widths are rejected.
 - I verified the Flipper app build locally, but I could not compile the Arduino sketch in this workspace because `arduino-cli` is not installed here.
 - If you later want richer bridge behavior, the next easy additions are printer status polling, Wi-Fi connect commands, and multi-device BT scan result paging.

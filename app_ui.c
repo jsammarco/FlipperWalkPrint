@@ -8,6 +8,7 @@ static const char* const walkprint_main_menu_items[] = {
     "Discover Printer",
     "Connect",
     "Print Message",
+    "Print BMP",
     "Feed Paper",
     "WiFi Scan",
     "Settings",
@@ -297,16 +298,21 @@ static void walkprint_ui_handle_main_menu(WalkPrintApp* app, const InputEvent* i
             walkprint_app_show_keyboard(app);
             break;
         case 4:
-            walkprint_app_queue_send_feed(app);
+            if(walkprint_app_select_bmp(app)) {
+                walkprint_app_queue_send_bmp(app);
+            }
             break;
         case 5:
-            walkprint_app_queue_scan_wifi(app);
+            walkprint_app_queue_send_feed(app);
             break;
         case 6:
+            walkprint_app_queue_scan_wifi(app);
+            break;
+        case 7:
             app->screen = WalkPrintScreenSettings;
             walkprint_app_set_status(app, "Settings", "Address font and density");
             break;
-        case 7:
+        case 8:
             app->screen = WalkPrintScreenAbout;
             walkprint_app_set_status(app, "About", "ConsultingJoe.com");
             break;
