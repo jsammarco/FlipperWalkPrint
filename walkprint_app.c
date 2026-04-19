@@ -17,6 +17,7 @@
 #define WALKPRINT_BMP_RASTER_CHUNK_ROWS 20U
 #define WALKPRINT_BMP_RASTER_CHUNK_SIZE \
     (WALKPRINT_PRINTER_BITMAP_WIDTH_BYTES * WALKPRINT_BMP_RASTER_CHUNK_ROWS)
+#define WALKPRINT_BMP_THRESHOLD_BASE 128U
 
 typedef enum {
     WalkPrintViewMain = 0,
@@ -532,6 +533,12 @@ static uint8_t walkprint_app_pixel_luma(
         return palette_luma[row[x]];
     }
 
+    if(info->bits_per_pixel == 4U) {
+        const uint8_t byte = row[x / 2U];
+        const uint8_t index = (x & 0x01U) == 0 ? (uint8_t)(byte >> 4U) : (uint8_t)(byte & 0x0FU);
+        return palette_luma[index];
+    }
+
     if(info->bits_per_pixel == 1U) {
         const uint8_t byte = row[x / 8U];
         const uint8_t bit = (uint8_t)((byte >> (7U - (x % 8U))) & 0x01U);
@@ -569,9 +576,9 @@ static bool walkprint_app_prepare_bmp_file(
         return false;
     }
 
-    if(info->bits_per_pixel != 1U && info->bits_per_pixel != 8U && info->bits_per_pixel != 24U &&
-       info->bits_per_pixel != 32U) {
-        walkprint_app_set_status(app, "BMP unsupported", "Use 1/8/24/32-bit BMP");
+    if(info->bits_per_pixel != 1U && info->bits_per_pixel != 4U && info->bits_per_pixel != 8U &&
+       info->bits_per_pixel != 24U && info->bits_per_pixel != 32U) {
+        walkprint_app_set_status(app, "BMP unsupported", "Use 1/4/8/24/32-bit BMP");
         return false;
     }
 
@@ -653,6 +660,7 @@ bool walkprint_app_send_bmp(WalkPrintApp* app) {
     uint8_t raster_chunk[WALKPRINT_BMP_RASTER_CHUNK_SIZE];
     size_t raster_chunk_length = 0;
     uint8_t image_header[8];
+    uint8_t threshold;
 
     if(!app || !app->storage || !app->image_path || furi_string_empty(app->image_path)) {
         return false;
@@ -676,6 +684,8 @@ bool walkprint_app_send_bmp(WalkPrintApp* app) {
     if(!walkprint_app_prepare_bmp_file(app, file, &info, palette_luma, sizeof(palette_luma))) {
         goto cleanup;
     }
+
+    threshold = (uint8_t)(WALKPRINT_BMP_THRESHOLD_BASE - (app->density / 2U));
 
     image_header[0] = 0x1D;
     image_header[1] = 0x76;
@@ -723,7 +733,7 @@ bool walkprint_app_send_bmp(WalkPrintApp* app) {
         memset(raster_row, 0, sizeof(raster_row));
         for(uint32_t x = 0; x < WALKPRINT_PRINTER_BITMAP_WIDTH; x++) {
             uint8_t luma = walkprint_app_pixel_luma(row_buffer, x, &info, palette_luma);
-            if(luma < 128U) {
+            if(luma < threshold) {
                 raster_row[x / 8U] |= (uint8_t)(1U << (7U - (x % 8U)));
             }
         }
