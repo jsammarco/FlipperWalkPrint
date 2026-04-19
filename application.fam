@@ -18,6 +18,7 @@ App(
     requires=[
         "gui",
         "dialogs",
+        "notification",
         "storage",
     ],
     targets=[

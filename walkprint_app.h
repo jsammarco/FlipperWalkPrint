@@ -11,6 +11,7 @@
 #include <gui/view_dispatcher.h>
 #include <gui/modules/text_input.h>
 #include <input/input.h>
+#include <notification/notification.h>
 #include <storage/storage.h>
 
 #include <stdbool.h>
@@ -30,6 +31,7 @@ typedef enum {
 typedef struct {
     Gui* gui;
     DialogsApp* dialogs;
+    NotificationApp* notifications;
     Storage* storage;
     ViewDispatcher* view_dispatcher;
     View* main_view;

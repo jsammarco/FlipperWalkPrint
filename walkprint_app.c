@@ -4,6 +4,7 @@
 #include "walkprint_debug.h"
 
 #include <dialogs/dialogs.h>
+#include <notification/notification_messages.h>
 #include <storage/storage.h>
 
 #include <stdio.h>
@@ -94,6 +95,7 @@ static void walkprint_app_copy_text(char* dst, size_t dst_size, const char* src)
 
 static bool walkprint_app_load_settings(WalkPrintApp* app);
 static bool walkprint_app_save_settings(WalkPrintApp* app);
+static void walkprint_app_update_led(WalkPrintApp* app);
 
 static void walkprint_app_queue_busy_action(
     WalkPrintApp* app,
@@ -118,6 +120,18 @@ static bool walkprint_app_require_connection(WalkPrintApp* app, const char* acti
 
     walkprint_app_set_status(app, "Not connected", action_name);
     return false;
+}
+
+static void walkprint_app_update_led(WalkPrintApp* app) {
+    if(!app || !app->notifications) {
+        return;
+    }
+
+    if(walkprint_transport_is_connected(&app->transport)) {
+        notification_internal_message(app->notifications, &sequence_set_only_green_255);
+    } else {
+        notification_internal_message(app->notifications, &sequence_reset_rgb);
+    }
 }
 
 static void walkprint_app_seed_defaults(WalkPrintApp* app) {
@@ -342,9 +356,14 @@ void walkprint_app_reset_transport(WalkPrintApp* app) {
 
     if(!walkprint_transport_init(
            &app->transport, walkprint_transport_live_ops(), app->printer_address)) {
+        app->transport.notifications = app->notifications;
+        walkprint_app_update_led(app);
         walkprint_app_set_status(app, "Transport init failed", "Check config");
         return;
     }
+
+    app->transport.notifications = app->notifications;
+    walkprint_app_update_led(app);
 
     walkprint_app_set_status(
         app,
@@ -377,6 +396,7 @@ bool walkprint_app_connect(WalkPrintApp* app) {
     }
 
     if(walkprint_transport_connect(&app->transport)) {
+        walkprint_app_update_led(app);
         walkprint_app_save_settings(app);
         walkprint_app_set_status(
             app,
@@ -387,6 +407,7 @@ bool walkprint_app_connect(WalkPrintApp* app) {
     }
 
     walkprint_app_set_status(app, "Connect failed", app->transport.last_response);
+    walkprint_app_update_led(app);
     return false;
 }
 
@@ -396,6 +417,7 @@ void walkprint_app_disconnect(WalkPrintApp* app) {
     }
 
     walkprint_transport_disconnect(&app->transport);
+    walkprint_app_update_led(app);
 }
 
 bool walkprint_app_ping_bridge(WalkPrintApp* app) {
@@ -1160,7 +1182,7 @@ const char* walkprint_app_connection_label(const WalkPrintApp* app) {
         return "Off";
     }
 
-    return walkprint_transport_is_connected(&app->transport) ? "Conn" : "Ready";
+    return walkprint_transport_is_connected(&app->transport) ? "Connected" : "Ready";
 }
 
 static WalkPrintApp* walkprint_app_alloc(void) {
@@ -1174,6 +1196,7 @@ static WalkPrintApp* walkprint_app_alloc(void) {
     memset(app, 0, sizeof(WalkPrintApp));
     app->gui = furi_record_open(RECORD_GUI);
     app->dialogs = furi_record_open(RECORD_DIALOGS);
+    app->notifications = furi_record_open(RECORD_NOTIFICATION);
     app->storage = furi_record_open(RECORD_STORAGE);
     app->view_dispatcher = view_dispatcher_alloc();
     app->main_view = view_alloc();
@@ -1212,6 +1235,7 @@ static void walkprint_app_free(WalkPrintApp* app) {
 
     walkprint_app_save_settings(app);
     walkprint_transport_disconnect(&app->transport);
+    walkprint_app_update_led(app);
 
     if(app->view_dispatcher) {
         view_dispatcher_remove_view(app->view_dispatcher, WalkPrintViewMain);
@@ -1234,6 +1258,9 @@ static void walkprint_app_free(WalkPrintApp* app) {
     }
     if(app->dialogs) {
         furi_record_close(RECORD_DIALOGS);
+    }
+    if(app->notifications) {
+        furi_record_close(RECORD_NOTIFICATION);
     }
     if(app->storage) {
         furi_record_close(RECORD_STORAGE);

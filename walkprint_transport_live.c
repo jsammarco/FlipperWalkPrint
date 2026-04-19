@@ -2,6 +2,7 @@
 
 #include "walkprint_debug.h"
 
+#include <notification/notification_messages.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
@@ -422,6 +423,10 @@ static bool walkprint_transport_live_send(
         size_t chunk_length = length - offset;
         if(chunk_length > WALKPRINT_BRIDGE_MAX_HEX_COMMAND_BYTES) {
             chunk_length = WALKPRINT_BRIDGE_MAX_HEX_COMMAND_BYTES;
+        }
+
+        if(transport->notifications) {
+            notification_message(transport->notifications, &sequence_blink_blue_10);
         }
 
         if(!walkprint_bridge_send_hex_command(

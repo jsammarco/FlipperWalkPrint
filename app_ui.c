@@ -24,7 +24,7 @@ static const char* const walkprint_settings_items[] = {
     "Orientation",
 };
 
-#define WALKPRINT_SETTINGS_VISIBLE_ITEMS 5U
+#define WALKPRINT_SETTINGS_VISIBLE_ITEMS 4U
 #define WALKPRINT_WIFI_VISIBLE_ITEMS 5U
 
 static size_t walkprint_ui_main_menu_count(void) {
@@ -41,9 +41,10 @@ static void walkprint_ui_draw_line(Canvas* canvas, uint8_t y, const char* text) 
 
 static void walkprint_ui_draw_header(Canvas* canvas, const WalkPrintApp* app) {
     canvas_clear(canvas);
-    canvas_set_font(canvas, FontSecondary);
+    canvas_set_font(canvas, FontPrimary);
     canvas_draw_str(canvas, 0, 12, WALKPRINT_APP_NAME);
-    canvas_draw_str(canvas, 94, 12, walkprint_app_connection_label(app));
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str(canvas, 82, 12, walkprint_app_connection_label(app));
     walkprint_ui_draw_line(canvas, 26, app->status_line);
 }
 

@@ -4,6 +4,7 @@
 
 #include <furi.h>
 #include <furi_hal.h>
+#include <notification/notification.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -27,6 +28,7 @@ struct WalkPrintTransport {
     bool initialized;
     bool connected;
     bool bridge_ready;
+    NotificationApp* notifications;
     char printer_address[WALKPRINT_PRINTER_ADDRESS_STR_SIZE];
     char printer_name[WALKPRINT_STATUS_TEXT_SIZE];
     char last_response[WALKPRINT_STATUS_TEXT_SIZE];
