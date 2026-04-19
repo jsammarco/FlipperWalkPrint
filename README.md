@@ -24,13 +24,16 @@ The ESP32 bridge is the practical transport layer for this setup because it can 
 
 ## Hardware Photos
 
-|  |  |
-| --- | --- |
-| ![Flipper module printer 2](https://raw.githubusercontent.com/jsammarco/FlipperWalkPrint/refs/heads/main/Images/flipper%20module%20printer2.jpg) | ![Flipper module printer](https://raw.githubusercontent.com/jsammarco/FlipperWalkPrint/refs/heads/main/Images/flipper%20module%20printer.jpg) |
-
-|  |  |
-| --- | --- |
-| ![Inland ESP-32](https://raw.githubusercontent.com/jsammarco/FlipperWalkPrint/refs/heads/main/Images/Inland%20ESP-32.JPG) | ![Flipper module back](https://raw.githubusercontent.com/jsammarco/FlipperWalkPrint/refs/heads/main/Images/flipper%20module%20back.jpg) |
+<table>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/jsammarco/FlipperWalkPrint/refs/heads/main/Images/flipper%20module%20printer2.jpg" alt="Flipper module printer 2" width="320"></td>
+    <td><img src="https://raw.githubusercontent.com/jsammarco/FlipperWalkPrint/refs/heads/main/Images/flipper%20module%20printer.jpg" alt="Flipper module printer" width="320"></td>
+  </tr>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/jsammarco/FlipperWalkPrint/refs/heads/main/Images/Inland%20ESP-32.JPG" alt="Inland ESP-32" width="320"></td>
+    <td><img src="https://raw.githubusercontent.com/jsammarco/FlipperWalkPrint/refs/heads/main/Images/flipper%20module%20back.jpg" alt="Flipper module back" width="320"></td>
+  </tr>
+</table>
 
 Files:
 
