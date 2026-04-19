@@ -81,9 +81,15 @@ static void walkprint_ui_draw_busy(Canvas* canvas, WalkPrintApp* app) {
     walkprint_ui_draw_line(canvas, 12, app->status_line);
     canvas_set_font(canvas, FontSecondary);
     walkprint_ui_draw_line(canvas, 28, app->detail_line);
-    walkprint_ui_draw_line(canvas, 40, "Bridge and printer");
-    walkprint_ui_draw_line(canvas, 48, "can take a moment.");
-    walkprint_ui_draw_line(canvas, 58, "Please wait...");
+    if(app->busy_cancelable) {
+        walkprint_ui_draw_line(canvas, 40, "Printing text pages");
+        walkprint_ui_draw_line(canvas, 48, "Back cancels after");
+        walkprint_ui_draw_line(canvas, 58, "the current page.");
+    } else {
+        walkprint_ui_draw_line(canvas, 40, "Bridge and printer");
+        walkprint_ui_draw_line(canvas, 48, "can take a moment.");
+        walkprint_ui_draw_line(canvas, 58, "Please wait...");
+    }
 }
 
 static void walkprint_ui_draw_settings(Canvas* canvas, WalkPrintApp* app) {
@@ -453,6 +459,12 @@ static void walkprint_ui_handle_about(WalkPrintApp* app, const InputEvent* input
     }
 }
 
+static void walkprint_ui_handle_busy(WalkPrintApp* app, const InputEvent* input_event) {
+    if(input_event->key == InputKeyBack) {
+        walkprint_app_request_cancel(app);
+    }
+}
+
 void app_ui_handle_input(WalkPrintApp* app, const InputEvent* input_event) {
     if(!app || !input_event || !walkprint_ui_accept_input_type(input_event)) {
         return;
@@ -472,6 +484,7 @@ void app_ui_handle_input(WalkPrintApp* app, const InputEvent* input_event) {
         walkprint_ui_handle_address_editor(app, input_event);
         break;
     case WalkPrintScreenBusy:
+        walkprint_ui_handle_busy(app, input_event);
         break;
     case WalkPrintScreenEditMessage:
         break;

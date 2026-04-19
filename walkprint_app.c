@@ -22,6 +22,7 @@
     (WALKPRINT_PRINTER_BITMAP_WIDTH_BYTES * WALKPRINT_BMP_RASTER_CHUNK_ROWS)
 #define WALKPRINT_BMP_THRESHOLD_BASE 128U
 #define WALKPRINT_TEXT_PAGE_BUFFER_SIZE 512U
+#define WALKPRINT_TEXT_PRINT_PAGE_DELAY_MS 100U
 
 typedef enum {
     WalkPrintViewMain = 0,
@@ -113,16 +114,22 @@ static bool walkprint_app_build_text_page(
     char* page_buffer,
     size_t page_buffer_size,
     bool* has_more);
+static void walkprint_app_schedule_text_print_page(WalkPrintApp* app);
+static void walkprint_app_clear_text_print_job(WalkPrintApp* app);
+static void walkprint_app_text_print_timer_callback(void* context);
 
 static void walkprint_app_queue_busy_action(
     WalkPrintApp* app,
     uint32_t event,
     const char* status,
-    const char* detail) {
+    const char* detail,
+    bool cancelable) {
     if(!app || !app->view_dispatcher) {
         return;
     }
 
+    app->text_print_cancel_requested = false;
+    app->busy_cancelable = cancelable;
     walkprint_app_set_status(app, status, detail);
     app->screen = WalkPrintScreenBusy;
     view_dispatcher_switch_to_view(app->view_dispatcher, WalkPrintViewMain);
@@ -164,6 +171,14 @@ static void walkprint_app_seed_defaults(WalkPrintApp* app) {
     app->char_spacing = 2;
     app->font_family = WalkPrintFontFamilyClassic;
     app->orientation = WalkPrintOrientationUpsideDown;
+    app->text_print_buffer = NULL;
+    app->text_print_offset = 0U;
+    app->text_print_chars_per_line = 0U;
+    app->text_print_lines_per_page = 0U;
+    app->text_print_page_count = 0U;
+    app->text_print_active = false;
+    app->text_print_cancel_requested = false;
+    app->busy_cancelable = false;
 
     app->printer_address[0] = '\0';
     app->address_edit_buffer[0] = '\0';
@@ -259,8 +274,9 @@ static bool walkprint_app_handle_custom_event(void* context, uint32_t event) {
         break;
     }
 
-    if(handled && app->screen != WalkPrintScreenWifiResults) {
+    if(handled && app->screen != WalkPrintScreenWifiResults && !app->text_print_active) {
         app->screen = WalkPrintScreenMainMenu;
+        app->busy_cancelable = false;
         walkprint_app_request_redraw(app);
     }
 
@@ -309,6 +325,54 @@ void walkprint_app_set_status(WalkPrintApp* app, const char* status, const char*
     walkprint_debug_log_info("Status: %s | %s", app->status_line, app->detail_line);
 }
 
+static void walkprint_app_clear_text_print_job(WalkPrintApp* app) {
+    if(!app) {
+        return;
+    }
+
+    if(app->text_print_timer) {
+        furi_timer_stop(app->text_print_timer);
+    }
+
+    free(app->text_print_buffer);
+    app->text_print_buffer = NULL;
+    app->text_print_offset = 0U;
+    app->text_print_chars_per_line = 0U;
+    app->text_print_lines_per_page = 0U;
+    app->text_print_page_count = 0U;
+    app->text_print_active = false;
+    app->text_print_cancel_requested = false;
+    app->busy_cancelable = false;
+}
+
+static void walkprint_app_text_print_timer_callback(void* context) {
+    WalkPrintApp* app = context;
+
+    if(!app || !app->view_dispatcher) {
+        return;
+    }
+
+    view_dispatcher_send_custom_event(app->view_dispatcher, WalkPrintCustomEventPrintTextFile);
+}
+
+static void walkprint_app_schedule_text_print_page(WalkPrintApp* app) {
+    if(!app || !app->text_print_timer) {
+        return;
+    }
+
+    furi_timer_start(app->text_print_timer, furi_ms_to_ticks(WALKPRINT_TEXT_PRINT_PAGE_DELAY_MS));
+}
+
+void walkprint_app_request_cancel(WalkPrintApp* app) {
+    if(!app || !app->busy_cancelable) {
+        return;
+    }
+
+    app->text_print_cancel_requested = true;
+    walkprint_app_set_status(app, "Canceling TXT", "Stopping after current page");
+    walkprint_app_request_redraw(app);
+}
+
 void walkprint_app_show_keyboard(WalkPrintApp* app) {
     if(!app || !app->text_input || !app->view_dispatcher) {
         return;
@@ -331,7 +395,7 @@ void walkprint_app_show_keyboard(WalkPrintApp* app) {
 
 void walkprint_app_queue_ping_bridge(WalkPrintApp* app) {
     walkprint_app_queue_busy_action(
-        app, WalkPrintCustomEventPingBridge, "Checking bridge", "Pinging ESP32 UART bridge");
+        app, WalkPrintCustomEventPingBridge, "Checking bridge", "Pinging ESP32 UART bridge", false);
 }
 
 void walkprint_app_queue_discover_printer(WalkPrintApp* app) {
@@ -339,37 +403,38 @@ void walkprint_app_queue_discover_printer(WalkPrintApp* app) {
         app,
         WalkPrintCustomEventDiscoverPrinter,
         "Discovering printer",
-        "Scanning Bluetooth devices");
+        "Scanning Bluetooth devices",
+        false);
 }
 
 void walkprint_app_queue_connect(WalkPrintApp* app) {
     walkprint_app_queue_busy_action(
-        app, WalkPrintCustomEventConnect, "Connecting printer", "Opening Bluetooth link");
+        app, WalkPrintCustomEventConnect, "Connecting printer", "Opening Bluetooth link", false);
 }
 
 void walkprint_app_queue_send_message(WalkPrintApp* app) {
     walkprint_app_queue_busy_action(
-        app, WalkPrintCustomEventPrintMessage, "Printing message", "Rendering custom text");
+        app, WalkPrintCustomEventPrintMessage, "Printing message", "Rendering custom text", false);
 }
 
 void walkprint_app_queue_send_text_file(WalkPrintApp* app) {
     walkprint_app_queue_busy_action(
-        app, WalkPrintCustomEventPrintTextFile, "Printing TXT", "Loading text from SD");
+        app, WalkPrintCustomEventPrintTextFile, "Printing TXT", "Loading text from SD", true);
 }
 
 void walkprint_app_queue_send_bmp(WalkPrintApp* app) {
     walkprint_app_queue_busy_action(
-        app, WalkPrintCustomEventPrintBmp, "Printing BMP", "Streaming SD bitmap");
+        app, WalkPrintCustomEventPrintBmp, "Printing BMP", "Streaming SD bitmap", false);
 }
 
 void walkprint_app_queue_send_feed(WalkPrintApp* app) {
     walkprint_app_queue_busy_action(
-        app, WalkPrintCustomEventFeedPaper, "Feeding paper", "Sending feed command");
+        app, WalkPrintCustomEventFeedPaper, "Feeding paper", "Sending feed command", false);
 }
 
 void walkprint_app_queue_scan_wifi(WalkPrintApp* app) {
     walkprint_app_queue_busy_action(
-        app, WalkPrintCustomEventScanWifi, "Scanning WiFi", "Querying bridge radios");
+        app, WalkPrintCustomEventScanWifi, "Scanning WiFi", "Querying bridge radios", false);
 }
 
 void walkprint_app_reset_transport(WalkPrintApp* app) {
@@ -1084,66 +1149,114 @@ bool walkprint_app_select_text_file(WalkPrintApp* app) {
 }
 
 bool walkprint_app_send_text_file(WalkPrintApp* app) {
-    char* file_message = NULL;
     char page_buffer[WALKPRINT_TEXT_PAGE_BUFFER_SIZE];
     char detail[WALKPRINT_STATUS_TEXT_SIZE];
-    size_t offset = 0U;
-    size_t chars_per_line;
-    size_t lines_per_page;
-    size_t page_count = 0U;
     bool has_more = false;
-    bool ok = false;
 
     if(!app || !app->text_path || furi_string_empty(app->text_path)) {
         walkprint_app_set_status(app, "TXT not selected", "Choose a .txt file first");
         return false;
     }
 
-    if(!walkprint_app_load_text_file_contents(
-           app,
-           furi_string_get_cstr(app->text_path),
-           &file_message)) {
-        return false;
-    }
-
-    chars_per_line = walkprint_app_text_chars_per_line(app);
-    lines_per_page = walkprint_app_text_lines_per_page(app);
-
-    while(walkprint_app_build_text_page(
-        file_message,
-        &offset,
-        chars_per_line,
-        lines_per_page,
-        page_buffer,
-        sizeof(page_buffer),
-        &has_more)) {
-        page_count++;
-
-        if(!walkprint_app_send_message_text(app, page_buffer, "TXT page printed")) {
-            goto cleanup;
+    if(!app->text_print_active) {
+        if(!walkprint_app_load_text_file_contents(
+               app,
+               furi_string_get_cstr(app->text_path),
+               &app->text_print_buffer)) {
+            return false;
         }
 
-        if(!has_more) {
-            ok = true;
-            break;
-        }
+        app->text_print_offset = 0U;
+        app->text_print_chars_per_line = walkprint_app_text_chars_per_line(app);
+        app->text_print_lines_per_page = walkprint_app_text_lines_per_page(app);
+        app->text_print_page_count = 0U;
+        app->text_print_active = true;
+        app->text_print_cancel_requested = false;
+        app->busy_cancelable = true;
     }
 
-    if(ok) {
+    if(app->text_print_cancel_requested) {
         snprintf(
             detail,
             sizeof(detail),
             "%u page%s",
-            (unsigned)page_count,
-            page_count == 1U ? "" : "s");
-        walkprint_app_set_status(app, "TXT printed", detail);
-    } else if(page_count == 0U) {
-        walkprint_app_set_status(app, "TXT empty", "No printable text found");
+            (unsigned)app->text_print_page_count,
+            app->text_print_page_count == 1U ? "" : "s");
+        walkprint_app_clear_text_print_job(app);
+        walkprint_app_set_status(app, "TXT canceled", detail);
+        return true;
     }
 
-cleanup:
-    free(file_message);
-    return ok;
+    if(!walkprint_app_build_text_page(
+           app->text_print_buffer,
+           &app->text_print_offset,
+           app->text_print_chars_per_line,
+           app->text_print_lines_per_page,
+           page_buffer,
+           sizeof(page_buffer),
+           &has_more)) {
+        if(app->text_print_page_count == 0U) {
+            walkprint_app_clear_text_print_job(app);
+            walkprint_app_set_status(app, "TXT empty", "No printable text found");
+        } else {
+            snprintf(
+                detail,
+                sizeof(detail),
+                "%u page%s",
+                (unsigned)app->text_print_page_count,
+                app->text_print_page_count == 1U ? "" : "s");
+            walkprint_app_clear_text_print_job(app);
+            walkprint_app_set_status(app, "TXT printed", detail);
+        }
+        return true;
+    }
+
+    app->text_print_page_count++;
+    snprintf(
+        detail,
+        sizeof(detail),
+        "Page %u%s",
+        (unsigned)app->text_print_page_count,
+        has_more ? "  Back cancels" : "");
+    walkprint_app_set_status(app, "Printing TXT", detail);
+
+    if(!walkprint_app_send_message_text(app, page_buffer, "TXT page printed")) {
+        walkprint_app_clear_text_print_job(app);
+        return false;
+    }
+
+    if(app->text_print_cancel_requested) {
+        snprintf(
+            detail,
+            sizeof(detail),
+            "%u page%s",
+            (unsigned)app->text_print_page_count,
+            app->text_print_page_count == 1U ? "" : "s");
+        walkprint_app_clear_text_print_job(app);
+        walkprint_app_set_status(app, "TXT canceled", detail);
+        return true;
+    }
+
+    if(has_more) {
+        snprintf(
+            detail,
+            sizeof(detail),
+            "Page %u done",
+            (unsigned)app->text_print_page_count);
+        walkprint_app_set_status(app, "Printing TXT", detail);
+        walkprint_app_schedule_text_print_page(app);
+        return true;
+    }
+
+    snprintf(
+        detail,
+        sizeof(detail),
+        "%u page%s",
+        (unsigned)app->text_print_page_count,
+        app->text_print_page_count == 1U ? "" : "s");
+    walkprint_app_clear_text_print_job(app);
+    walkprint_app_set_status(app, "TXT printed", detail);
+    return true;
 }
 
 bool walkprint_app_send_bmp(WalkPrintApp* app) {
@@ -1544,6 +1657,8 @@ static WalkPrintApp* walkprint_app_alloc(void) {
     app->view_dispatcher = view_dispatcher_alloc();
     app->main_view = view_alloc();
     app->text_input = text_input_alloc();
+    app->text_print_timer =
+        furi_timer_alloc(walkprint_app_text_print_timer_callback, FuriTimerTypeOnce, app);
     app->image_path = furi_string_alloc();
     app->text_path = furi_string_alloc();
 
@@ -1579,6 +1694,7 @@ static void walkprint_app_free(WalkPrintApp* app) {
 
     walkprint_app_save_settings(app);
     walkprint_transport_disconnect(&app->transport);
+    walkprint_app_clear_text_print_job(app);
     walkprint_app_update_led(app);
 
     if(app->view_dispatcher) {
@@ -1587,6 +1703,9 @@ static void walkprint_app_free(WalkPrintApp* app) {
     }
     if(app->text_input) {
         text_input_free(app->text_input);
+    }
+    if(app->text_print_timer) {
+        furi_timer_free(app->text_print_timer);
     }
     if(app->image_path) {
         furi_string_free(app->image_path);

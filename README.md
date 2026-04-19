@@ -157,7 +157,7 @@ The desktop bridge now adds:
 ## Notes
 
 - The Flipper talks to the printer through the ESP32 bridge over UART; it does not open the printer's Classic Bluetooth link on its own.
-- `Print TXT` reads a `.txt` file from the Flipper SD card, keeps line breaks, and prints it across as many text pages as needed.
+- `Print TXT` reads a `.txt` file from the Flipper SD card, keeps line breaks, and prints it across as many text pages as needed. While a multi-page TXT job is running, `Back` cancels after the current page finishes.
 - The built-in text renderer is best for standard printable ASCII. If a text file uses Unicode art, block characters, or other extended symbols, convert it to an image and use `Print BMP` instead.
 - `Print BMP` expects a `.bmp` file on the Flipper SD card that is exactly `384px` wide. Files with other widths are rejected by the app.
 - The Flipper app build was verified locally in this workspace. The Arduino bridge sketch was not compiled here because `arduino-cli` is not installed.
