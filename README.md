@@ -173,7 +173,6 @@ The desktop bridge now adds:
 - `Print TXT` reads a `.txt` file from the Flipper SD card, keeps line breaks, and prints it across as many text pages as needed. While a multi-page TXT job is running, `Back` cancels after the current page finishes.
 - The built-in text renderer is best for standard printable ASCII. If a text file uses Unicode art, block characters, or other extended symbols, convert it to an image and use `Print BMP` instead.
 - `Print BMP` expects a `.bmp` file on the Flipper SD card that is exactly `384px` wide. Files with other widths are rejected by the app.
-- After selecting a BMP, the Flipper now shows a confirmation screen with `OK` to print and `Back` to cancel. The same screen is also wired for future generated QR/barcode BMP flows, where it can do `Save + Print` before sending the image.
 - The new QR and 1D barcode helpers in `bridge/walkprint_bridge.py` generate `384px` BMP files specifically so they can be copied to the Flipper SD card and printed with the existing `Print BMP` menu item.
 - Use the Arduino IDE to compile and upload the ESP32 bridge sketch, and make sure the partition option matches the included `partitions.csv` setup.
 - Good next additions for the bridge would be printer status polling, Wi-Fi connect commands, and better paging for larger Bluetooth scan results.
