@@ -99,6 +99,7 @@ static void walkprint_app_copy_text(char* dst, size_t dst_size, const char* src)
 static bool walkprint_app_load_settings(WalkPrintApp* app);
 static bool walkprint_app_save_settings(WalkPrintApp* app);
 static void walkprint_app_update_led(WalkPrintApp* app);
+static bool walkprint_app_copy_file(WalkPrintApp* app, const char* source_path, const char* target_path);
 static bool walkprint_app_send_message_text(WalkPrintApp* app, const char* message, const char* success_status);
 static bool walkprint_app_load_text_file_contents(
     WalkPrintApp* app,
@@ -179,6 +180,7 @@ static void walkprint_app_seed_defaults(WalkPrintApp* app) {
     app->text_print_active = false;
     app->text_print_cancel_requested = false;
     app->busy_cancelable = false;
+    app->bmp_confirm_save_before_print = false;
 
     app->printer_address[0] = '\0';
     app->address_edit_buffer[0] = '\0';
@@ -190,6 +192,9 @@ static void walkprint_app_seed_defaults(WalkPrintApp* app) {
         sizeof(app->raw_frame_preview));
     if(app->image_path) {
         furi_string_set(app->image_path, STORAGE_EXT_PATH_PREFIX);
+    }
+    if(app->pending_bmp_output_path) {
+        furi_string_set(app->pending_bmp_output_path, STORAGE_EXT_PATH_PREFIX "/generated.bmp");
     }
     walkprint_app_set_status(app, "Ready", "Discover printer to save MAC");
 }
@@ -1117,8 +1122,120 @@ bool walkprint_app_select_bmp(WalkPrintApp* app) {
         return false;
     }
 
+    app->bmp_confirm_save_before_print = false;
+    if(app->pending_bmp_output_path) {
+        furi_string_reset(app->pending_bmp_output_path);
+    }
     walkprint_app_save_settings(app);
     walkprint_app_set_status(app, "BMP selected", furi_string_get_cstr(app->image_path));
+    return true;
+}
+
+void walkprint_app_show_bmp_confirm(WalkPrintApp* app, bool save_before_print) {
+    if(!app) {
+        return;
+    }
+
+    app->bmp_confirm_save_before_print = save_before_print;
+    app->screen = WalkPrintScreenConfirmBmp;
+    walkprint_app_request_redraw(app);
+}
+
+void walkprint_app_prepare_generated_bmp(
+    WalkPrintApp* app,
+    const char* temp_bmp_path,
+    const char* save_bmp_path,
+    const char* label) {
+    if(!app || !app->image_path || !app->pending_bmp_output_path || !temp_bmp_path || !save_bmp_path) {
+        return;
+    }
+
+    furi_string_set(app->image_path, temp_bmp_path);
+    furi_string_set(app->pending_bmp_output_path, save_bmp_path);
+    walkprint_app_set_status(app, label ? label : "Generated BMP", save_bmp_path);
+    walkprint_app_show_bmp_confirm(app, true);
+}
+
+static bool walkprint_app_copy_file(WalkPrintApp* app, const char* source_path, const char* target_path) {
+    File* source = NULL;
+    File* target = NULL;
+    uint8_t buffer[128];
+    bool ok = false;
+
+    if(!app || !app->storage || !source_path || !target_path) {
+        return false;
+    }
+
+    source = storage_file_alloc(app->storage);
+    target = storage_file_alloc(app->storage);
+    if(!source || !target) {
+        walkprint_app_set_status(app, "BMP save failed", "File alloc failed");
+        goto cleanup;
+    }
+
+    if(!storage_file_open(source, source_path, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        walkprint_app_set_status(app, "BMP save failed", "Source open failed");
+        goto cleanup;
+    }
+
+    if(!storage_file_open(target, target_path, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+        walkprint_app_set_status(app, "BMP save failed", "Target open failed");
+        goto cleanup;
+    }
+
+    while(true) {
+        uint16_t read_count = storage_file_read(source, buffer, sizeof(buffer));
+        if(read_count == 0U) {
+            break;
+        }
+
+        if(storage_file_write(target, buffer, read_count) != read_count) {
+            walkprint_app_set_status(app, "BMP save failed", "Write failed");
+            goto cleanup;
+        }
+    }
+
+    ok = true;
+
+cleanup:
+    if(source) {
+        storage_file_close(source);
+        storage_file_free(source);
+    }
+    if(target) {
+        storage_file_close(target);
+        storage_file_free(target);
+    }
+
+    return ok;
+}
+
+bool walkprint_app_confirm_bmp(WalkPrintApp* app) {
+    const char* saved_path;
+
+    if(!app || !app->image_path || furi_string_empty(app->image_path)) {
+        walkprint_app_set_status(app, "BMP not selected", "Choose a BMP first");
+        return false;
+    }
+
+    if(app->bmp_confirm_save_before_print) {
+        if(!app->pending_bmp_output_path || furi_string_empty(app->pending_bmp_output_path)) {
+            walkprint_app_set_status(app, "BMP save failed", "Missing output path");
+            return false;
+        }
+
+        saved_path = furi_string_get_cstr(app->pending_bmp_output_path);
+        if(!walkprint_app_copy_file(app, furi_string_get_cstr(app->image_path), saved_path)) {
+            return false;
+        }
+
+        furi_string_set(app->image_path, saved_path);
+        app->bmp_confirm_save_before_print = false;
+        walkprint_app_save_settings(app);
+        walkprint_app_set_status(app, "BMP saved", saved_path);
+    }
+
+    walkprint_app_queue_send_bmp(app);
     return true;
 }
 
@@ -1661,6 +1778,7 @@ static WalkPrintApp* walkprint_app_alloc(void) {
         furi_timer_alloc(walkprint_app_text_print_timer_callback, FuriTimerTypeOnce, app);
     app->image_path = furi_string_alloc();
     app->text_path = furi_string_alloc();
+    app->pending_bmp_output_path = furi_string_alloc();
 
     walkprint_app_seed_defaults(app);
     walkprint_app_load_settings(app);
@@ -1713,6 +1831,9 @@ static void walkprint_app_free(WalkPrintApp* app) {
 
     if(app->text_path) {
         furi_string_free(app->text_path);
+    }
+    if(app->pending_bmp_output_path) {
+        furi_string_free(app->pending_bmp_output_path);
     }
     if(app->main_view) {
         view_free(app->main_view);
