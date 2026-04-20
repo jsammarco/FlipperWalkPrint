@@ -6,6 +6,7 @@ WalkPrint is a Flipper Zero external app for a WalkPrint / YHK-style thermal pri
 | --- | --- |
 | Print custom typed messages | Print `.txt` files from the SD card |
 | Print `384px` BMP images from the SD card | Discover nearby supported printers |
+| Generate QR BMPs on-device and save/print them | Generate Code 128 barcode BMPs on-device and save/print them |
 | Connect through the ESP32 Classic Bluetooth bridge | Scan Wi-Fi from the bridge |
 | Adjust density, font size, spacing, and font family | Save printer address and print settings |
 
