@@ -34,9 +34,7 @@
 #define WALKPRINT_BARCODE_QUIET_MODULES 10U
 #define WALKPRINT_BARCODE_HEIGHT 140U
 #define WALKPRINT_GENERATED_QR_TEMP_PATH STORAGE_EXT_PATH_PREFIX "/.walkprint_qr_tmp.bmp"
-#define WALKPRINT_GENERATED_QR_SAVE_PATH STORAGE_EXT_PATH_PREFIX "/walkprint_qr.bmp"
 #define WALKPRINT_GENERATED_BARCODE_TEMP_PATH STORAGE_EXT_PATH_PREFIX "/.walkprint_barcode_tmp.bmp"
-#define WALKPRINT_GENERATED_BARCODE_SAVE_PATH STORAGE_EXT_PATH_PREFIX "/walkprint_barcode.bmp"
 
 typedef enum {
     WalkPrintViewMain = 0,
@@ -116,6 +114,11 @@ static void walkprint_app_copy_text(char* dst, size_t dst_size, const char* src)
     snprintf(dst, dst_size, "%s", src);
 }
 
+static bool walkprint_app_is_safe_filename_char(char ch) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+           ch == '_' || ch == '-' || ch == '.';
+}
+
 static bool walkprint_app_load_settings(WalkPrintApp* app);
 static bool walkprint_app_save_settings(WalkPrintApp* app);
 static void walkprint_app_update_led(WalkPrintApp* app);
@@ -127,6 +130,17 @@ static void walkprint_app_show_text_input(
     size_t buffer_size,
     const char* status);
 static bool walkprint_app_copy_file(WalkPrintApp* app, const char* source_path, const char* target_path);
+static void walkprint_app_begin_generated_filename_input(
+    WalkPrintApp* app,
+    WalkPrintInputMode filename_mode,
+    const char* default_name,
+    const char* status);
+static void walkprint_app_set_default_generated_filename(WalkPrintApp* app, const char* base_name);
+static bool walkprint_app_build_generated_output_path(
+    WalkPrintApp* app,
+    const char* filename,
+    char* output_path,
+    size_t output_path_size);
 static bool walkprint_app_generate_qr_bmp(WalkPrintApp* app, const char* text, const char* output_path);
 static bool walkprint_app_generate_barcode_bmp(
     WalkPrintApp* app,
@@ -242,6 +256,8 @@ static void walkprint_app_seed_defaults(WalkPrintApp* app) {
     app->address_edit_buffer[0] = '\0';
     walkprint_app_copy_text(app->compose_message, sizeof(app->compose_message), "HELLO");
     app->generated_text[0] = '\0';
+    walkprint_app_copy_text(
+        app->generated_filename, sizeof(app->generated_filename), "walkprint_qr.bmp");
     walkprint_debug_format_hex_preview(
         walkprint_config_raw_frame,
         WALKPRINT_RAW_FRAME_LEN,
@@ -282,6 +298,7 @@ static bool walkprint_app_main_view_input(InputEvent* input_event, void* context
 
 static void walkprint_app_text_input_done(void* context) {
     WalkPrintApp* app = context;
+    char output_path[WALKPRINT_PATH_MAX_SIZE];
 
     if(!app) {
         return;
@@ -292,22 +309,37 @@ static void walkprint_app_text_input_done(void* context) {
     if(app->input_mode == WalkPrintInputModeMessage) {
         walkprint_app_save_settings(app);
         walkprint_app_queue_send_message(app);
-    } else if(app->input_mode == WalkPrintInputModeQr) {
-        if(walkprint_app_generate_qr_bmp(
-               app, app->generated_text, WALKPRINT_GENERATED_QR_TEMP_PATH)) {
+    } else if(app->input_mode == WalkPrintInputModeQrContent) {
+        walkprint_app_begin_generated_filename_input(
+            app,
+            WalkPrintInputModeQrFilename,
+            "walkprint_qr.bmp",
+            "Name QR BMP");
+    } else if(app->input_mode == WalkPrintInputModeQrFilename) {
+        if(walkprint_app_build_generated_output_path(
+               app, app->generated_filename, output_path, sizeof(output_path)) &&
+           walkprint_app_generate_qr_bmp(app, app->generated_text, WALKPRINT_GENERATED_QR_TEMP_PATH)) {
             walkprint_app_prepare_generated_bmp(
                 app,
                 WALKPRINT_GENERATED_QR_TEMP_PATH,
-                WALKPRINT_GENERATED_QR_SAVE_PATH,
+                output_path,
                 "QR ready to save");
         }
-    } else if(app->input_mode == WalkPrintInputModeBarcode) {
-        if(walkprint_app_generate_barcode_bmp(
+    } else if(app->input_mode == WalkPrintInputModeBarcodeContent) {
+        walkprint_app_begin_generated_filename_input(
+            app,
+            WalkPrintInputModeBarcodeFilename,
+            "walkprint_barcode.bmp",
+            "Name barcode BMP");
+    } else if(app->input_mode == WalkPrintInputModeBarcodeFilename) {
+        if(walkprint_app_build_generated_output_path(
+               app, app->generated_filename, output_path, sizeof(output_path)) &&
+           walkprint_app_generate_barcode_bmp(
                app, app->generated_text, WALKPRINT_GENERATED_BARCODE_TEMP_PATH)) {
             walkprint_app_prepare_generated_bmp(
                 app,
                 WALKPRINT_GENERATED_BARCODE_TEMP_PATH,
-                WALKPRINT_GENERATED_BARCODE_SAVE_PATH,
+                output_path,
                 "Barcode ready to save");
         }
     }
@@ -377,7 +409,9 @@ static bool walkprint_app_navigation_event(void* context) {
         view_dispatcher_switch_to_view(app->view_dispatcher, WalkPrintViewMain);
         if(app->input_mode == WalkPrintInputModeMessage) {
             walkprint_app_set_status(app, "Ready", app->compose_message);
-        } else if(app->input_mode == WalkPrintInputModeQr) {
+        } else if(
+            app->input_mode == WalkPrintInputModeQrContent ||
+            app->input_mode == WalkPrintInputModeQrFilename) {
             walkprint_app_set_status(app, "QR canceled", "Back to menu");
         } else {
             walkprint_app_set_status(app, "Barcode canceled", "Back to menu");
@@ -408,6 +442,92 @@ static void walkprint_app_show_text_input(
     app->screen = WalkPrintScreenEditMessage;
     walkprint_app_set_status(app, status, "Use keyboard to type");
     view_dispatcher_switch_to_view(app->view_dispatcher, WalkPrintViewKeyboard);
+}
+
+static void walkprint_app_set_default_generated_filename(WalkPrintApp* app, const char* base_name) {
+    size_t src = 0U;
+    size_t dst = 0U;
+
+    if(!app || !base_name || sizeof(app->generated_filename) < 5U) {
+        return;
+    }
+
+    while(base_name[src] != '\0' && dst + 5U < sizeof(app->generated_filename)) {
+        char ch = base_name[src++];
+        if(ch == ' ') {
+            ch = '_';
+        }
+        if(walkprint_app_is_safe_filename_char(ch)) {
+            app->generated_filename[dst++] = ch;
+        }
+    }
+
+    if(dst == 0U) {
+        walkprint_app_copy_text(
+            app->generated_filename, sizeof(app->generated_filename), "generated.bmp");
+        return;
+    }
+
+    app->generated_filename[dst] = '\0';
+    if(dst < 4U || strcmp(&app->generated_filename[dst - 4U], ".bmp") != 0) {
+        snprintf(
+            app->generated_filename + dst,
+            sizeof(app->generated_filename) - dst,
+            ".bmp");
+    }
+}
+
+static void walkprint_app_begin_generated_filename_input(
+    WalkPrintApp* app,
+    WalkPrintInputMode filename_mode,
+    const char* default_name,
+    const char* status) {
+    walkprint_app_set_default_generated_filename(app, default_name);
+    walkprint_app_show_text_input(
+        app,
+        filename_mode,
+        "Filename",
+        app->generated_filename,
+        sizeof(app->generated_filename),
+        status);
+}
+
+static bool walkprint_app_build_generated_output_path(
+    WalkPrintApp* app,
+    const char* filename,
+    char* output_path,
+    size_t output_path_size) {
+    char sanitized[sizeof(app->generated_filename)];
+    size_t src = 0U;
+    size_t dst = 0U;
+
+    if(!app || !filename || !output_path || output_path_size == 0U) {
+        return false;
+    }
+
+    while(filename[src] != '\0' && dst + 5U < sizeof(sanitized)) {
+        char ch = filename[src++];
+        if(ch == ' ') {
+            ch = '_';
+        }
+        if(walkprint_app_is_safe_filename_char(ch)) {
+            sanitized[dst++] = ch;
+        }
+    }
+
+    if(dst == 0U) {
+        walkprint_app_set_status(app, "Filename invalid", "Enter a BMP file name");
+        return false;
+    }
+
+    sanitized[dst] = '\0';
+    if(dst < 4U || strcmp(&sanitized[dst - 4U], ".bmp") != 0) {
+        snprintf(sanitized + dst, sizeof(sanitized) - dst, ".bmp");
+    }
+
+    snprintf(output_path, output_path_size, STORAGE_EXT_PATH_PREFIX "/%s", sanitized);
+    walkprint_app_copy_text(app->generated_filename, sizeof(app->generated_filename), sanitized);
+    return true;
 }
 
 void walkprint_app_request_redraw(WalkPrintApp* app) {
@@ -496,7 +616,7 @@ void walkprint_app_show_keyboard(WalkPrintApp* app) {
 void walkprint_app_begin_qr_input(WalkPrintApp* app) {
     walkprint_app_show_text_input(
         app,
-        WalkPrintInputModeQr,
+        WalkPrintInputModeQrContent,
         "QR text",
         app->generated_text,
         sizeof(app->generated_text),
@@ -506,7 +626,7 @@ void walkprint_app_begin_qr_input(WalkPrintApp* app) {
 void walkprint_app_begin_barcode_input(WalkPrintApp* app) {
     walkprint_app_show_text_input(
         app,
-        WalkPrintInputModeBarcode,
+        WalkPrintInputModeBarcodeContent,
         "Barcode text",
         app->generated_text,
         sizeof(app->generated_text),

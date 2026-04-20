@@ -31,8 +31,10 @@ typedef enum {
 
 typedef enum {
     WalkPrintInputModeMessage = 0,
-    WalkPrintInputModeQr,
-    WalkPrintInputModeBarcode,
+    WalkPrintInputModeQrContent,
+    WalkPrintInputModeQrFilename,
+    WalkPrintInputModeBarcodeContent,
+    WalkPrintInputModeBarcodeFilename,
 } WalkPrintInputMode;
 
 typedef struct {
@@ -66,6 +68,7 @@ typedef struct {
     char address_edit_buffer[WALKPRINT_PRINTER_ADDRESS_STR_SIZE];
     char compose_message[33];
     char generated_text[64];
+    char generated_filename[32];
     char* text_print_buffer;
     size_t text_print_offset;
     size_t text_print_chars_per_line;
