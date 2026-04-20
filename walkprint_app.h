@@ -29,6 +29,12 @@ typedef enum {
     WalkPrintScreenAbout,
 } WalkPrintScreen;
 
+typedef enum {
+    WalkPrintInputModeMessage = 0,
+    WalkPrintInputModeQr,
+    WalkPrintInputModeBarcode,
+} WalkPrintInputMode;
+
 typedef struct {
     Gui* gui;
     DialogsApp* dialogs;
@@ -44,6 +50,7 @@ typedef struct {
     WalkPrintProtocol protocol;
     WalkPrintTransport transport;
     WalkPrintScreen screen;
+    WalkPrintInputMode input_mode;
     bool running;
     size_t main_menu_index;
     size_t settings_index;
@@ -58,6 +65,7 @@ typedef struct {
     char printer_address[WALKPRINT_PRINTER_ADDRESS_STR_SIZE];
     char address_edit_buffer[WALKPRINT_PRINTER_ADDRESS_STR_SIZE];
     char compose_message[33];
+    char generated_text[64];
     char* text_print_buffer;
     size_t text_print_offset;
     size_t text_print_chars_per_line;
@@ -77,6 +85,8 @@ int32_t walkprint_app(void* p);
 void walkprint_app_request_redraw(WalkPrintApp* app);
 void walkprint_app_set_status(WalkPrintApp* app, const char* status, const char* detail);
 void walkprint_app_show_keyboard(WalkPrintApp* app);
+void walkprint_app_begin_qr_input(WalkPrintApp* app);
+void walkprint_app_begin_barcode_input(WalkPrintApp* app);
 void walkprint_app_queue_ping_bridge(WalkPrintApp* app);
 void walkprint_app_queue_discover_printer(WalkPrintApp* app);
 void walkprint_app_queue_connect(WalkPrintApp* app);

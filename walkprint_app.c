@@ -23,6 +23,20 @@
 #define WALKPRINT_BMP_THRESHOLD_BASE 128U
 #define WALKPRINT_TEXT_PAGE_BUFFER_SIZE 512U
 #define WALKPRINT_TEXT_PRINT_PAGE_DELAY_MS 100U
+#define WALKPRINT_GENERATED_QR_TEXT_MAX 53U
+#define WALKPRINT_GENERATED_BARCODE_TEXT_MAX 24U
+#define WALKPRINT_QR_VERSION 3U
+#define WALKPRINT_QR_SIZE 29U
+#define WALKPRINT_QR_DATA_CODEWORDS 55U
+#define WALKPRINT_QR_ECC_CODEWORDS 15U
+#define WALKPRINT_QR_TOTAL_CODEWORDS 70U
+#define WALKPRINT_QR_MASK 0U
+#define WALKPRINT_BARCODE_QUIET_MODULES 10U
+#define WALKPRINT_BARCODE_HEIGHT 140U
+#define WALKPRINT_GENERATED_QR_TEMP_PATH STORAGE_EXT_PATH_PREFIX "/.walkprint_qr_tmp.bmp"
+#define WALKPRINT_GENERATED_QR_SAVE_PATH STORAGE_EXT_PATH_PREFIX "/walkprint_qr.bmp"
+#define WALKPRINT_GENERATED_BARCODE_TEMP_PATH STORAGE_EXT_PATH_PREFIX "/.walkprint_barcode_tmp.bmp"
+#define WALKPRINT_GENERATED_BARCODE_SAVE_PATH STORAGE_EXT_PATH_PREFIX "/walkprint_barcode.bmp"
 
 typedef enum {
     WalkPrintViewMain = 0,
@@ -70,6 +84,12 @@ typedef struct {
     char image_path[WALKPRINT_PATH_MAX_SIZE];
 } WalkPrintSavedSettings;
 
+typedef struct {
+    uint8_t size;
+    uint8_t modules[WALKPRINT_QR_SIZE * WALKPRINT_QR_SIZE];
+    uint8_t is_function[WALKPRINT_QR_SIZE * WALKPRINT_QR_SIZE];
+} WalkPrintQrMatrix;
+
 static uint16_t walkprint_app_read_le16(const uint8_t* bytes) {
     return (uint16_t)bytes[0] | ((uint16_t)bytes[1] << 8U);
 }
@@ -99,7 +119,19 @@ static void walkprint_app_copy_text(char* dst, size_t dst_size, const char* src)
 static bool walkprint_app_load_settings(WalkPrintApp* app);
 static bool walkprint_app_save_settings(WalkPrintApp* app);
 static void walkprint_app_update_led(WalkPrintApp* app);
+static void walkprint_app_show_text_input(
+    WalkPrintApp* app,
+    WalkPrintInputMode mode,
+    const char* header,
+    char* buffer,
+    size_t buffer_size,
+    const char* status);
 static bool walkprint_app_copy_file(WalkPrintApp* app, const char* source_path, const char* target_path);
+static bool walkprint_app_generate_qr_bmp(WalkPrintApp* app, const char* text, const char* output_path);
+static bool walkprint_app_generate_barcode_bmp(
+    WalkPrintApp* app,
+    const char* text,
+    const char* output_path);
 static bool walkprint_app_send_message_text(WalkPrintApp* app, const char* message, const char* success_status);
 static bool walkprint_app_load_text_file_contents(
     WalkPrintApp* app,
@@ -118,6 +150,29 @@ static bool walkprint_app_build_text_page(
 static void walkprint_app_schedule_text_print_page(WalkPrintApp* app);
 static void walkprint_app_clear_text_print_job(WalkPrintApp* app);
 static void walkprint_app_text_print_timer_callback(void* context);
+
+static const char* const walkprint_code128_patterns[106] = {
+    "11011001100", "11001101100", "11001100110", "10010011000", "10010001100", "10001001100",
+    "10011001000", "10011000100", "10001100100", "11001001000", "11001000100", "11000100100",
+    "10110011100", "10011011100", "10011001110", "10111001100", "10011101100", "10011100110",
+    "11001110010", "11001011100", "11001001110", "11011100100", "11001110100", "11101101110",
+    "11101001100", "11100101100", "11100100110", "11101100100", "11100110100", "11100110010",
+    "11011011000", "11011000110", "11000110110", "10100011000", "10001011000", "10001000110",
+    "10110001000", "10001101000", "10001100010", "11010001000", "11000101000", "11000100010",
+    "10110111000", "10110001110", "10001101110", "10111011000", "10111000110", "10001110110",
+    "11101110110", "11010001110", "11000101110", "11011101000", "11011100010", "11011101110",
+    "11101011000", "11101000110", "11100010110", "11101101000", "11101100010", "11100011010",
+    "11101111010", "11001000010", "11110001010", "10100110000", "10100001100", "10010110000",
+    "10010000110", "10000101100", "10000100110", "10110010000", "10110000100", "10011010000",
+    "10011000010", "10000110100", "10000110010", "11000010010", "11001010000", "11110111010",
+    "11000010100", "10001111010", "10100111100", "10010111100", "10010011110", "10111100100",
+    "10011110100", "10011110010", "11110100100", "11110010100", "11110010010", "11011011110",
+    "11011110110", "11110110110", "10101111000", "10100011110", "10001011110", "10111101000",
+    "10111100010", "11110101000", "11110100010", "10111011110", "10111101110", "11101011110",
+    "11110101110", "11010000100", "11010010000", "11010011100",
+};
+
+static const char walkprint_code128_stop_pattern[] = "1100011101011";
 
 static void walkprint_app_queue_busy_action(
     WalkPrintApp* app,
@@ -161,6 +216,7 @@ static void walkprint_app_update_led(WalkPrintApp* app) {
 
 static void walkprint_app_seed_defaults(WalkPrintApp* app) {
     app->screen = WalkPrintScreenMainMenu;
+    app->input_mode = WalkPrintInputModeMessage;
     app->running = true;
     app->main_menu_index = 0;
     app->settings_index = 0;
@@ -185,6 +241,7 @@ static void walkprint_app_seed_defaults(WalkPrintApp* app) {
     app->printer_address[0] = '\0';
     app->address_edit_buffer[0] = '\0';
     walkprint_app_copy_text(app->compose_message, sizeof(app->compose_message), "HELLO");
+    app->generated_text[0] = '\0';
     walkprint_debug_format_hex_preview(
         walkprint_config_raw_frame,
         WALKPRINT_RAW_FRAME_LEN,
@@ -232,8 +289,28 @@ static void walkprint_app_text_input_done(void* context) {
 
     app->screen = WalkPrintScreenMainMenu;
     view_dispatcher_switch_to_view(app->view_dispatcher, WalkPrintViewMain);
-    walkprint_app_save_settings(app);
-    walkprint_app_queue_send_message(app);
+    if(app->input_mode == WalkPrintInputModeMessage) {
+        walkprint_app_save_settings(app);
+        walkprint_app_queue_send_message(app);
+    } else if(app->input_mode == WalkPrintInputModeQr) {
+        if(walkprint_app_generate_qr_bmp(
+               app, app->generated_text, WALKPRINT_GENERATED_QR_TEMP_PATH)) {
+            walkprint_app_prepare_generated_bmp(
+                app,
+                WALKPRINT_GENERATED_QR_TEMP_PATH,
+                WALKPRINT_GENERATED_QR_SAVE_PATH,
+                "QR ready to save");
+        }
+    } else if(app->input_mode == WalkPrintInputModeBarcode) {
+        if(walkprint_app_generate_barcode_bmp(
+               app, app->generated_text, WALKPRINT_GENERATED_BARCODE_TEMP_PATH)) {
+            walkprint_app_prepare_generated_bmp(
+                app,
+                WALKPRINT_GENERATED_BARCODE_TEMP_PATH,
+                WALKPRINT_GENERATED_BARCODE_SAVE_PATH,
+                "Barcode ready to save");
+        }
+    }
 }
 
 static bool walkprint_app_handle_custom_event(void* context, uint32_t event) {
@@ -298,11 +375,39 @@ static bool walkprint_app_navigation_event(void* context) {
     if(app->screen == WalkPrintScreenEditMessage) {
         app->screen = WalkPrintScreenMainMenu;
         view_dispatcher_switch_to_view(app->view_dispatcher, WalkPrintViewMain);
-        walkprint_app_set_status(app, "Ready", app->compose_message);
+        if(app->input_mode == WalkPrintInputModeMessage) {
+            walkprint_app_set_status(app, "Ready", app->compose_message);
+        } else if(app->input_mode == WalkPrintInputModeQr) {
+            walkprint_app_set_status(app, "QR canceled", "Back to menu");
+        } else {
+            walkprint_app_set_status(app, "Barcode canceled", "Back to menu");
+        }
         return true;
     }
 
     return false;
+}
+
+static void walkprint_app_show_text_input(
+    WalkPrintApp* app,
+    WalkPrintInputMode mode,
+    const char* header,
+    char* buffer,
+    size_t buffer_size,
+    const char* status) {
+    if(!app || !app->text_input || !app->view_dispatcher || !buffer || buffer_size < 2U) {
+        return;
+    }
+
+    app->input_mode = mode;
+    text_input_reset(app->text_input);
+    text_input_set_header_text(app->text_input, header);
+    text_input_set_minimum_length(app->text_input, 1U);
+    text_input_set_result_callback(
+        app->text_input, walkprint_app_text_input_done, app, buffer, buffer_size, false);
+    app->screen = WalkPrintScreenEditMessage;
+    walkprint_app_set_status(app, status, "Use keyboard to type");
+    view_dispatcher_switch_to_view(app->view_dispatcher, WalkPrintViewKeyboard);
 }
 
 void walkprint_app_request_redraw(WalkPrintApp* app) {
@@ -379,23 +484,33 @@ void walkprint_app_request_cancel(WalkPrintApp* app) {
 }
 
 void walkprint_app_show_keyboard(WalkPrintApp* app) {
-    if(!app || !app->text_input || !app->view_dispatcher) {
-        return;
-    }
-
-    text_input_reset(app->text_input);
-    text_input_set_header_text(app->text_input, "Message to print");
-    text_input_set_minimum_length(app->text_input, 1U);
-    text_input_set_result_callback(
-        app->text_input,
-        walkprint_app_text_input_done,
+    walkprint_app_show_text_input(
         app,
+        WalkPrintInputModeMessage,
+        "Message to print",
         app->compose_message,
         sizeof(app->compose_message),
-        false);
-    app->screen = WalkPrintScreenEditMessage;
-    walkprint_app_set_status(app, "Editing message", "Use keyboard to type");
-    view_dispatcher_switch_to_view(app->view_dispatcher, WalkPrintViewKeyboard);
+        "Editing message");
+}
+
+void walkprint_app_begin_qr_input(WalkPrintApp* app) {
+    walkprint_app_show_text_input(
+        app,
+        WalkPrintInputModeQr,
+        "QR text",
+        app->generated_text,
+        sizeof(app->generated_text),
+        "Editing QR");
+}
+
+void walkprint_app_begin_barcode_input(WalkPrintApp* app) {
+    walkprint_app_show_text_input(
+        app,
+        WalkPrintInputModeBarcode,
+        "Barcode text",
+        app->generated_text,
+        sizeof(app->generated_text),
+        "Editing barcode");
 }
 
 void walkprint_app_queue_ping_bridge(WalkPrintApp* app) {
@@ -820,6 +935,514 @@ static bool walkprint_app_storage_read_exact(File* file, void* buffer, size_t le
 
 static bool walkprint_app_storage_write_exact(File* file, const void* buffer, size_t length) {
     return file && buffer && storage_file_write(file, buffer, length) == length;
+}
+
+static uint8_t walkprint_qr_gf_multiply(uint8_t x, uint8_t y) {
+    uint8_t z = 0U;
+
+    while(y != 0U) {
+        if((y & 0x01U) != 0U) {
+            z ^= x;
+        }
+        y >>= 1U;
+        x = (uint8_t)((x << 1U) ^ ((x & 0x80U) != 0U ? 0x1DU : 0x00U));
+    }
+
+    return z;
+}
+
+static void walkprint_qr_append_bits(
+    uint8_t* data,
+    size_t* bit_len,
+    size_t bit_capacity,
+    uint32_t value,
+    uint8_t bit_count) {
+    if(!data || !bit_len) {
+        return;
+    }
+
+    for(uint8_t i = 0; i < bit_count && *bit_len < bit_capacity; i++) {
+        uint8_t bit = (uint8_t)((value >> (bit_count - 1U - i)) & 0x01U);
+        size_t index = *bit_len;
+        if(bit != 0U) {
+            data[index / 8U] |= (uint8_t)(1U << (7U - (index % 8U)));
+        }
+        (*bit_len)++;
+    }
+}
+
+static bool walkprint_qr_matrix_set(
+    WalkPrintQrMatrix* matrix,
+    int16_t x,
+    int16_t y,
+    bool black,
+    bool is_function) {
+    size_t index;
+
+    if(!matrix || x < 0 || y < 0 || x >= matrix->size || y >= matrix->size) {
+        return false;
+    }
+
+    index = (size_t)y * matrix->size + (size_t)x;
+    matrix->modules[index] = black ? 1U : 0U;
+    if(is_function) {
+        matrix->is_function[index] = 1U;
+    }
+    return true;
+}
+
+static void walkprint_qr_draw_finder(WalkPrintQrMatrix* matrix, int16_t left, int16_t top) {
+    for(int16_t dy = -1; dy <= 7; dy++) {
+        for(int16_t dx = -1; dx <= 7; dx++) {
+            int16_t x = left + dx;
+            int16_t y = top + dy;
+            bool in_core = dx >= 0 && dx <= 6 && dy >= 0 && dy <= 6;
+            bool black =
+                in_core &&
+                (dx == 0 || dx == 6 || dy == 0 || dy == 6 ||
+                 ((dx >= 2 && dx <= 4) && (dy >= 2 && dy <= 4)));
+            walkprint_qr_matrix_set(matrix, x, y, black, true);
+        }
+    }
+}
+
+static void walkprint_qr_draw_alignment(WalkPrintQrMatrix* matrix, int16_t center_x, int16_t center_y) {
+    for(int16_t dy = -2; dy <= 2; dy++) {
+        for(int16_t dx = -2; dx <= 2; dx++) {
+            int16_t dist_x = dx < 0 ? -dx : dx;
+            int16_t dist_y = dy < 0 ? -dy : dy;
+            bool black = dist_x == 2 || dist_y == 2 || (dx == 0 && dy == 0);
+            walkprint_qr_matrix_set(matrix, center_x + dx, center_y + dy, black, true);
+        }
+    }
+}
+
+static void walkprint_qr_reserve_format_bits(WalkPrintQrMatrix* matrix) {
+    if(!matrix) {
+        return;
+    }
+
+    for(uint8_t i = 0; i <= 5U; i++) {
+        walkprint_qr_matrix_set(matrix, 8, i, false, true);
+        walkprint_qr_matrix_set(matrix, i, 8, false, true);
+    }
+    walkprint_qr_matrix_set(matrix, 8, 7, false, true);
+    walkprint_qr_matrix_set(matrix, 8, 8, false, true);
+    walkprint_qr_matrix_set(matrix, 7, 8, false, true);
+
+    for(uint8_t i = 0; i < 8U; i++) {
+        walkprint_qr_matrix_set(matrix, matrix->size - 1 - i, 8, false, true);
+        walkprint_qr_matrix_set(matrix, 8, matrix->size - 1 - i, false, true);
+    }
+}
+
+static void walkprint_qr_draw_function_patterns(WalkPrintQrMatrix* matrix) {
+    if(!matrix) {
+        return;
+    }
+
+    walkprint_qr_draw_finder(matrix, 0, 0);
+    walkprint_qr_draw_finder(matrix, matrix->size - 7, 0);
+    walkprint_qr_draw_finder(matrix, 0, matrix->size - 7);
+
+    for(uint8_t i = 8U; i < (uint8_t)(matrix->size - 8U); i++) {
+        bool black = (i % 2U) == 0U;
+        walkprint_qr_matrix_set(matrix, 6, i, black, true);
+        walkprint_qr_matrix_set(matrix, i, 6, black, true);
+    }
+
+    walkprint_qr_draw_alignment(matrix, 22, 22);
+    walkprint_qr_reserve_format_bits(matrix);
+    walkprint_qr_matrix_set(matrix, 8, matrix->size - 8, true, true);
+}
+
+static void walkprint_qr_build_generator(uint8_t degree, uint8_t* generator) {
+    uint8_t root = 1U;
+
+    if(!generator || degree == 0U) {
+        return;
+    }
+
+    memset(generator, 0, degree);
+    generator[degree - 1U] = 1U;
+
+    for(uint8_t i = 0; i < degree; i++) {
+        for(uint8_t j = 0; j < degree; j++) {
+            generator[j] = walkprint_qr_gf_multiply(generator[j], root);
+            if(j + 1U < degree) {
+                generator[j] ^= generator[j + 1U];
+            }
+        }
+        root = walkprint_qr_gf_multiply(root, 0x02U);
+    }
+}
+
+static void walkprint_qr_compute_remainder(
+    const uint8_t* data,
+    uint8_t data_len,
+    const uint8_t* generator,
+    uint8_t degree,
+    uint8_t* remainder) {
+    if(!data || !generator || !remainder) {
+        return;
+    }
+
+    memset(remainder, 0, degree);
+    for(uint8_t i = 0; i < data_len; i++) {
+        uint8_t factor = data[i] ^ remainder[0];
+
+        memmove(remainder, remainder + 1, degree - 1U);
+        remainder[degree - 1U] = 0U;
+        for(uint8_t j = 0; j < degree; j++) {
+            remainder[j] ^= walkprint_qr_gf_multiply(generator[j], factor);
+        }
+    }
+}
+
+static void walkprint_qr_write_format_bits(WalkPrintQrMatrix* matrix, uint8_t mask) {
+    static const uint16_t format_bits[8] = {
+        0x77C4U, 0x72F3U, 0x7DAAU, 0x789DU, 0x662FU, 0x6318U, 0x6C41U, 0x6976U,
+    };
+    uint16_t bits;
+
+    if(!matrix || mask >= 8U) {
+        return;
+    }
+
+    bits = format_bits[mask];
+    for(uint8_t i = 0; i <= 5U; i++) {
+        walkprint_qr_matrix_set(matrix, 8, i, ((bits >> i) & 1U) != 0U, true);
+    }
+    walkprint_qr_matrix_set(matrix, 8, 7, ((bits >> 6U) & 1U) != 0U, true);
+    walkprint_qr_matrix_set(matrix, 8, 8, ((bits >> 7U) & 1U) != 0U, true);
+    walkprint_qr_matrix_set(matrix, 7, 8, ((bits >> 8U) & 1U) != 0U, true);
+    for(uint8_t i = 9U; i < 15U; i++) {
+        walkprint_qr_matrix_set(matrix, 14 - i, 8, ((bits >> i) & 1U) != 0U, true);
+    }
+
+    for(uint8_t i = 0U; i < 8U; i++) {
+        walkprint_qr_matrix_set(matrix, matrix->size - 1 - i, 8, ((bits >> i) & 1U) != 0U, true);
+    }
+    for(uint8_t i = 8U; i < 15U; i++) {
+        walkprint_qr_matrix_set(matrix, 8, matrix->size - 15 + i, ((bits >> i) & 1U) != 0U, true);
+    }
+}
+
+static bool walkprint_qr_encode_text(const char* text, WalkPrintQrMatrix* matrix) {
+    uint8_t data[WALKPRINT_QR_DATA_CODEWORDS];
+    uint8_t generator[WALKPRINT_QR_ECC_CODEWORDS];
+    uint8_t remainder[WALKPRINT_QR_ECC_CODEWORDS];
+    uint8_t codewords[WALKPRINT_QR_TOTAL_CODEWORDS];
+    size_t text_len;
+    size_t bit_len = 0U;
+    size_t bit_capacity = WALKPRINT_QR_DATA_CODEWORDS * 8U;
+    size_t bit_index = 0U;
+
+    if(!text || !matrix) {
+        return false;
+    }
+
+    text_len = strlen(text);
+    if(text_len == 0U || text_len > WALKPRINT_GENERATED_QR_TEXT_MAX) {
+        return false;
+    }
+
+    memset(matrix, 0, sizeof(*matrix));
+    matrix->size = WALKPRINT_QR_SIZE;
+    walkprint_qr_draw_function_patterns(matrix);
+
+    memset(data, 0, sizeof(data));
+    walkprint_qr_append_bits(data, &bit_len, bit_capacity, 0x4U, 4U);
+    walkprint_qr_append_bits(data, &bit_len, bit_capacity, (uint32_t)text_len, 8U);
+    for(size_t i = 0; i < text_len; i++) {
+        walkprint_qr_append_bits(data, &bit_len, bit_capacity, (uint8_t)text[i], 8U);
+    }
+    if(bit_len + 4U <= bit_capacity) {
+        bit_len += 4U;
+    } else {
+        bit_len = bit_capacity;
+    }
+    while((bit_len % 8U) != 0U && bit_len < bit_capacity) {
+        bit_len++;
+    }
+    for(size_t i = bit_len / 8U; i < WALKPRINT_QR_DATA_CODEWORDS; i++) {
+        data[i] = (i % 2U) == 0U ? 0xECU : 0x11U;
+    }
+
+    walkprint_qr_build_generator(WALKPRINT_QR_ECC_CODEWORDS, generator);
+    walkprint_qr_compute_remainder(
+        data, WALKPRINT_QR_DATA_CODEWORDS, generator, WALKPRINT_QR_ECC_CODEWORDS, remainder);
+
+    memcpy(codewords, data, sizeof(data));
+    memcpy(codewords + WALKPRINT_QR_DATA_CODEWORDS, remainder, sizeof(remainder));
+
+    for(int16_t right = matrix->size - 1; right >= 1; right -= 2) {
+        bool upward;
+
+        if(right == 6) {
+            right = 5;
+        }
+        upward = (((right + 1) & 2U) == 0U);
+        for(uint8_t vert = 0; vert < matrix->size; vert++) {
+            uint8_t y = upward ? (uint8_t)(matrix->size - 1U - vert) : vert;
+            for(uint8_t j = 0; j < 2U; j++) {
+                uint8_t x = (uint8_t)(right - j);
+                size_t index = (size_t)y * matrix->size + x;
+                bool black = false;
+
+                if(matrix->is_function[index] != 0U) {
+                    continue;
+                }
+                if(bit_index < sizeof(codewords) * 8U) {
+                    black =
+                        ((codewords[bit_index / 8U] >> (7U - (bit_index % 8U))) & 0x01U) != 0U;
+                    bit_index++;
+                }
+                if(((x + y) & 0x01U) == 0U) {
+                    black = !black;
+                }
+                matrix->modules[index] = black ? 1U : 0U;
+            }
+        }
+    }
+
+    walkprint_qr_write_format_bits(matrix, WALKPRINT_QR_MASK);
+    return true;
+}
+
+static void walkprint_app_write_le16(uint8_t* buffer, uint16_t value) {
+    buffer[0] = (uint8_t)(value & 0xFFU);
+    buffer[1] = (uint8_t)((value >> 8U) & 0xFFU);
+}
+
+static void walkprint_app_write_le32(uint8_t* buffer, uint32_t value) {
+    buffer[0] = (uint8_t)(value & 0xFFU);
+    buffer[1] = (uint8_t)((value >> 8U) & 0xFFU);
+    buffer[2] = (uint8_t)((value >> 16U) & 0xFFU);
+    buffer[3] = (uint8_t)((value >> 24U) & 0xFFU);
+}
+
+static bool walkprint_app_open_generated_bmp(
+    WalkPrintApp* app,
+    const char* path,
+    uint32_t height,
+    File** file_out) {
+    File* file;
+    uint8_t file_header[14];
+    uint8_t info_header[40];
+    uint8_t palette[8];
+    uint32_t image_size = WALKPRINT_PRINTER_BITMAP_WIDTH_BYTES * height;
+    uint32_t file_size = sizeof(file_header) + sizeof(info_header) + sizeof(palette) + image_size;
+
+    if(!app || !app->storage || !path || !file_out || height == 0U) {
+        return false;
+    }
+
+    file = storage_file_alloc(app->storage);
+    if(!file) {
+        walkprint_app_set_status(app, "BMP save failed", "File alloc failed");
+        return false;
+    }
+
+    if(!storage_file_open(file, path, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+        storage_file_free(file);
+        walkprint_app_set_status(app, "BMP save failed", "Open for write failed");
+        return false;
+    }
+
+    memset(file_header, 0, sizeof(file_header));
+    memset(info_header, 0, sizeof(info_header));
+    memset(palette, 0, sizeof(palette));
+
+    file_header[0] = 'B';
+    file_header[1] = 'M';
+    walkprint_app_write_le32(&file_header[2], file_size);
+    walkprint_app_write_le32(
+        &file_header[10], (uint32_t)(sizeof(file_header) + sizeof(info_header) + sizeof(palette)));
+
+    walkprint_app_write_le32(&info_header[0], sizeof(info_header));
+    walkprint_app_write_le32(&info_header[4], WALKPRINT_PRINTER_BITMAP_WIDTH);
+    walkprint_app_write_le32(&info_header[8], (uint32_t)(-(int32_t)height));
+    walkprint_app_write_le16(&info_header[12], 1U);
+    walkprint_app_write_le16(&info_header[14], 1U);
+    walkprint_app_write_le32(&info_header[20], image_size);
+    walkprint_app_write_le32(&info_header[24], 11811U);
+    walkprint_app_write_le32(&info_header[28], 11811U);
+    walkprint_app_write_le32(&info_header[32], 2U);
+    walkprint_app_write_le32(&info_header[36], 2U);
+
+    palette[0] = 0xFFU;
+    palette[1] = 0xFFU;
+    palette[2] = 0xFFU;
+    palette[3] = 0x00U;
+    palette[4] = 0x00U;
+    palette[5] = 0x00U;
+    palette[6] = 0x00U;
+    palette[7] = 0x00U;
+
+    if(!walkprint_app_storage_write_exact(file, file_header, sizeof(file_header)) ||
+       !walkprint_app_storage_write_exact(file, info_header, sizeof(info_header)) ||
+       !walkprint_app_storage_write_exact(file, palette, sizeof(palette))) {
+        storage_file_close(file);
+        storage_file_free(file);
+        walkprint_app_set_status(app, "BMP save failed", "Header write failed");
+        return false;
+    }
+
+    *file_out = file;
+    return true;
+}
+
+static void walkprint_app_set_row_bit(uint8_t* row, uint32_t x) {
+    row[x / 8U] |= (uint8_t)(1U << (7U - (x % 8U)));
+}
+
+static bool walkprint_app_generate_qr_bmp(WalkPrintApp* app, const char* text, const char* output_path) {
+    WalkPrintQrMatrix matrix;
+    File* file = NULL;
+    uint32_t border = 2U;
+    uint32_t total_modules;
+    uint32_t scale;
+    uint32_t render_size;
+    uint32_t left_pad;
+    uint8_t row[WALKPRINT_PRINTER_BITMAP_WIDTH_BYTES];
+
+    if(!app || !text || !output_path) {
+        return false;
+    }
+
+    if(!walkprint_qr_encode_text(text, &matrix)) {
+        walkprint_app_set_status(app, "QR build failed", "Use 1-53 ASCII chars");
+        return false;
+    }
+
+    total_modules = matrix.size + border * 2U;
+    scale = WALKPRINT_PRINTER_BITMAP_WIDTH / total_modules;
+    if(scale == 0U) {
+        walkprint_app_set_status(app, "QR build failed", "Scale too small");
+        return false;
+    }
+    render_size = total_modules * scale;
+    left_pad = (WALKPRINT_PRINTER_BITMAP_WIDTH - render_size) / 2U;
+
+    if(!walkprint_app_open_generated_bmp(app, output_path, render_size, &file)) {
+        return false;
+    }
+
+    for(uint32_t y = 0; y < render_size; y++) {
+        int32_t module_y = (int32_t)(y / scale) - (int32_t)border;
+
+        memset(row, 0, sizeof(row));
+        for(uint32_t x = 0; x < render_size; x++) {
+            int32_t module_x = (int32_t)(x / scale) - (int32_t)border;
+            bool black = false;
+
+            if(module_x >= 0 && module_y >= 0 && module_x < matrix.size && module_y < matrix.size) {
+                black = matrix.modules[(size_t)module_y * matrix.size + (size_t)module_x] != 0U;
+            }
+            if(black) {
+                walkprint_app_set_row_bit(row, left_pad + x);
+            }
+        }
+
+        if(!walkprint_app_storage_write_exact(file, row, sizeof(row))) {
+            storage_file_close(file);
+            storage_file_free(file);
+            walkprint_app_set_status(app, "QR save failed", "Row write failed");
+            return false;
+        }
+    }
+
+    storage_file_close(file);
+    storage_file_free(file);
+    walkprint_app_set_status(app, "QR generated", output_path);
+    return true;
+}
+
+static bool walkprint_app_generate_barcode_bmp(
+    WalkPrintApp* app,
+    const char* text,
+    const char* output_path) {
+    size_t text_len;
+    uint16_t checksum = 104U;
+    char pattern[512];
+    size_t pattern_len = 0U;
+    uint32_t total_modules;
+    uint32_t left_pad;
+    uint32_t top_pad = 8U;
+    uint32_t bottom_pad = 8U;
+    File* file = NULL;
+    uint8_t row[WALKPRINT_PRINTER_BITMAP_WIDTH_BYTES];
+
+    if(!app || !text || !output_path) {
+        return false;
+    }
+
+    text_len = strlen(text);
+    if(text_len == 0U || text_len > WALKPRINT_GENERATED_BARCODE_TEXT_MAX) {
+        walkprint_app_set_status(app, "Barcode build failed", "Use 1-24 ASCII chars");
+        return false;
+    }
+
+    for(size_t i = 0; i < text_len; i++) {
+        uint8_t ch = (uint8_t)text[i];
+        if(ch < 32U || ch > 126U) {
+            walkprint_app_set_status(app, "Barcode build failed", "Use printable ASCII only");
+            return false;
+        }
+    }
+
+    memset(pattern, 0, sizeof(pattern));
+    memcpy(pattern + pattern_len, walkprint_code128_patterns[104], 11U);
+    pattern_len += 11U;
+    for(size_t i = 0; i < text_len; i++) {
+        uint8_t code = (uint8_t)text[i] - 32U;
+        size_t code_len = strlen(walkprint_code128_patterns[code]);
+
+        checksum = (uint16_t)(checksum + ((i + 1U) * code));
+        memcpy(pattern + pattern_len, walkprint_code128_patterns[code], code_len);
+        pattern_len += code_len;
+    }
+    checksum %= 103U;
+    memcpy(pattern + pattern_len, walkprint_code128_patterns[checksum], 11U);
+    pattern_len += 11U;
+    memcpy(pattern + pattern_len, walkprint_code128_stop_pattern, sizeof(walkprint_code128_stop_pattern) - 1U);
+    pattern_len += sizeof(walkprint_code128_stop_pattern) - 1U;
+    pattern[pattern_len] = '\0';
+
+    total_modules = (uint32_t)pattern_len + WALKPRINT_BARCODE_QUIET_MODULES * 2U;
+    if(total_modules > WALKPRINT_PRINTER_BITMAP_WIDTH) {
+        walkprint_app_set_status(app, "Barcode too wide", "Try shorter text");
+        return false;
+    }
+    left_pad = (WALKPRINT_PRINTER_BITMAP_WIDTH - total_modules) / 2U;
+
+    if(!walkprint_app_open_generated_bmp(app, output_path, WALKPRINT_BARCODE_HEIGHT, &file)) {
+        return false;
+    }
+
+    for(uint32_t y = 0; y < WALKPRINT_BARCODE_HEIGHT; y++) {
+        memset(row, 0, sizeof(row));
+        if(y >= top_pad && y + bottom_pad < WALKPRINT_BARCODE_HEIGHT) {
+            for(size_t i = 0; i < pattern_len; i++) {
+                if(pattern[i] == '1') {
+                    walkprint_app_set_row_bit(
+                        row, left_pad + WALKPRINT_BARCODE_QUIET_MODULES + (uint32_t)i);
+                }
+            }
+        }
+        if(!walkprint_app_storage_write_exact(file, row, sizeof(row))) {
+            storage_file_close(file);
+            storage_file_free(file);
+            walkprint_app_set_status(app, "Barcode save failed", "Row write failed");
+            return false;
+        }
+    }
+
+    storage_file_close(file);
+    storage_file_free(file);
+    walkprint_app_set_status(app, "Barcode generated", output_path);
+    return true;
 }
 
 static bool walkprint_app_load_settings(WalkPrintApp* app) {

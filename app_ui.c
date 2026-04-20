@@ -9,6 +9,8 @@ static const char* const walkprint_main_menu_items[] = {
     "Connect",
     "Print Message",
     "Print TXT",
+    "Print QR",
+    "Print Barcode",
     "Print BMP",
     "Feed Paper",
     "WiFi Scan",
@@ -326,21 +328,27 @@ static void walkprint_ui_handle_main_menu(WalkPrintApp* app, const InputEvent* i
             }
             break;
         case 5:
+            walkprint_app_begin_qr_input(app);
+            break;
+        case 6:
+            walkprint_app_begin_barcode_input(app);
+            break;
+        case 7:
             if(walkprint_app_select_bmp(app)) {
                 walkprint_app_show_bmp_confirm(app, false);
             }
             break;
-        case 6:
+        case 8:
             walkprint_app_queue_send_feed(app);
             break;
-        case 7:
+        case 9:
             walkprint_app_queue_scan_wifi(app);
             break;
-        case 8:
+        case 10:
             app->screen = WalkPrintScreenSettings;
             walkprint_app_set_status(app, "Settings", "Address font and density");
             break;
-        case 9:
+        case 11:
             app->screen = WalkPrintScreenAbout;
             walkprint_app_set_status(app, "About", "ConsultingJoe.com");
             break;

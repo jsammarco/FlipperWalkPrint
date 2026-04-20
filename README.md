@@ -136,6 +136,8 @@ qFlipper CLI:
 - Connect
 - Print Message
 - Print TXT
+- Print QR
+- Print Barcode
 - Print BMP
 - Feed Paper
 - WiFi Scan
@@ -151,6 +153,8 @@ The app now shows:
 - the selected font family
 - the latest bridge discovery or Wi-Fi scan result
 - BMP print status for `.bmp` files selected from storage
+- generated QR BMP status for Flipper-side save and print
+- generated barcode BMP status for Flipper-side save and print
 - TXT print status for `.txt` files selected from storage
 - persisted settings after the app closes, including printer MAC, message, BMP path, and print options
 
@@ -171,9 +175,11 @@ The desktop bridge now adds:
 
 - The Flipper talks to the printer through the ESP32 bridge over UART; it does not open the printer's Classic Bluetooth link on its own.
 - `Print TXT` reads a `.txt` file from the Flipper SD card, keeps line breaks, and prints it across as many text pages as needed. While a multi-page TXT job is running, `Back` cancels after the current page finishes.
+- `Print QR` now generates a QR BMP directly on the Flipper from keyboard input, then offers `Save + Print` through the existing BMP confirmation flow. The current on-device encoder uses QR version 3-L and accepts up to `53` characters.
+- `Print Barcode` now generates a Code 128 B BMP directly on the Flipper from keyboard input, then offers `Save + Print` through the same confirmation flow. The current on-device encoder accepts printable ASCII and keeps input to `24` characters so the bars still fit at `384px`.
 - The built-in text renderer is best for standard printable ASCII. If a text file uses Unicode art, block characters, or other extended symbols, convert it to an image and use `Print BMP` instead.
 - `Print BMP` expects a `.bmp` file on the Flipper SD card that is exactly `384px` wide. Files with other widths are rejected by the app.
-- After selecting a BMP, the Flipper now shows a confirmation screen with `OK` to print and `Back` to cancel. The same screen is also wired for future generated QR/barcode BMP flows, where it can do `Save + Print` before sending the image.
+- After selecting a BMP, the Flipper now shows a confirmation screen with `OK` to print and `Back` to cancel. Generated QR and barcode jobs reuse the same screen for `Save + Print`, saving to `/ext/walkprint_qr.bmp` and `/ext/walkprint_barcode.bmp`.
 - The new QR and 1D barcode helpers in `bridge/walkprint_bridge.py` generate `384px` BMP files specifically so they can be copied to the Flipper SD card and printed with the existing `Print BMP` menu item.
 - Use the Arduino IDE to compile and upload the ESP32 bridge sketch, and make sure the partition option matches the included `partitions.csv` setup.
 - Good next additions for the bridge would be printer status polling, Wi-Fi connect commands, and better paging for larger Bluetooth scan results.
