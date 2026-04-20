@@ -23,7 +23,7 @@ The build scripts prefer your local Momentum firmware checkout when it is presen
 - The app UI now includes printer discovery, Wi-Fi scan, configurable message font size/family settings, `.txt` printing from the SD card, and BMP printing from the SD card.
 - The live transport in [walkprint_transport_live.c](https://github.com/jsammarco/FlipperWalkPrint/blob/main/walkprint_transport_live.c) uses Flipper header pins `13/14` (`PB6/PB7`) at `115200`.
 - The ESP32 bridge sketch lives at [esp32_bridge/walkprint_esp32_bridge/walkprint_esp32_bridge.ino](https://github.com/jsammarco/FlipperWalkPrint/blob/main/esp32_bridge/walkprint_esp32_bridge/walkprint_esp32_bridge.ino).
-- The optional WalkPrint Bridge is a PC-side Python script under `bridge/` for desktop helpers like image conversion and direct PC printing. It is not required for the Flipper Zero app.
+- The optional WalkPrint Bridge is a PC-side Python script under `bridge/` for desktop helpers like image conversion, QR/1D barcode BMP generation, and direct PC printing. It is not required for the Flipper Zero app.
 
 ## ESP32 Bridge
 
@@ -158,6 +158,12 @@ The desktop bridge now adds:
 
 - `python bridge/walkprint_bridge.py image <path>` to send an image directly
 - `python bridge/walkprint_bridge.py convert-image <path>` to generate the printer payload without sending
+- `python bridge/walkprint_bridge.py make-qr --text "..."` to generate a `384px` BMP QR code for Flipper-side `Print BMP`
+- `python bridge/walkprint_bridge.py make-qr --input-file path.txt` to generate a QR code from a file
+- `python bridge/walkprint_bridge.py make-barcode --text "..."` to generate a `384px` BMP 1D barcode for Flipper-side `Print BMP`
+- `python bridge/walkprint_bridge.py make-barcode --input-file path.txt` to generate a 1D barcode from a file
+- `python bridge/walkprint_bridge.py qr --text "..."` to generate and print a QR code directly
+- `python bridge/walkprint_bridge.py barcode --text "..."` to generate and print a 1D barcode directly
 - `.\bridge\send_image.ps1` to select an image with a Windows file picker and send it
 - `.\bridge\send_image.ps1 -BmpOnly` to pick only `.bmp` files and send them at the default `384px` print width
 
@@ -167,5 +173,6 @@ The desktop bridge now adds:
 - `Print TXT` reads a `.txt` file from the Flipper SD card, keeps line breaks, and prints it across as many text pages as needed. While a multi-page TXT job is running, `Back` cancels after the current page finishes.
 - The built-in text renderer is best for standard printable ASCII. If a text file uses Unicode art, block characters, or other extended symbols, convert it to an image and use `Print BMP` instead.
 - `Print BMP` expects a `.bmp` file on the Flipper SD card that is exactly `384px` wide. Files with other widths are rejected by the app.
+- The new QR and 1D barcode helpers in `bridge/walkprint_bridge.py` generate `384px` BMP files specifically so they can be copied to the Flipper SD card and printed with the existing `Print BMP` menu item.
 - Use the Arduino IDE to compile and upload the ESP32 bridge sketch, and make sure the partition option matches the included `partitions.csv` setup.
 - Good next additions for the bridge would be printer status polling, Wi-Fi connect commands, and better paging for larger Bluetooth scan results.

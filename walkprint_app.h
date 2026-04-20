@@ -25,6 +25,7 @@ typedef enum {
     WalkPrintScreenWifiResults,
     WalkPrintScreenEditAddress,
     WalkPrintScreenEditMessage,
+    WalkPrintScreenConfirmBmp,
     WalkPrintScreenAbout,
 } WalkPrintScreen;
 
@@ -39,6 +40,7 @@ typedef struct {
     FuriTimer* text_print_timer;
     FuriString* image_path;
     FuriString* text_path;
+    FuriString* pending_bmp_output_path;
     WalkPrintProtocol protocol;
     WalkPrintTransport transport;
     WalkPrintScreen screen;
@@ -64,6 +66,7 @@ typedef struct {
     bool text_print_active;
     bool text_print_cancel_requested;
     bool busy_cancelable;
+    bool bmp_confirm_save_before_print;
     char status_line[WALKPRINT_STATUS_TEXT_SIZE];
     char detail_line[WALKPRINT_STATUS_TEXT_SIZE];
     char raw_frame_preview[WALKPRINT_HEX_PREVIEW_SIZE];
@@ -90,6 +93,13 @@ bool walkprint_app_send_message(WalkPrintApp* app);
 bool walkprint_app_select_text_file(WalkPrintApp* app);
 bool walkprint_app_send_text_file(WalkPrintApp* app);
 bool walkprint_app_select_bmp(WalkPrintApp* app);
+void walkprint_app_show_bmp_confirm(WalkPrintApp* app, bool save_before_print);
+void walkprint_app_prepare_generated_bmp(
+    WalkPrintApp* app,
+    const char* temp_bmp_path,
+    const char* save_bmp_path,
+    const char* label);
+bool walkprint_app_confirm_bmp(WalkPrintApp* app);
 bool walkprint_app_send_bmp(WalkPrintApp* app);
 bool walkprint_app_send_feed(WalkPrintApp* app);
 bool walkprint_app_discover_printer(WalkPrintApp* app);
