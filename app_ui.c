@@ -200,18 +200,6 @@ static void walkprint_ui_draw_about(Canvas* canvas) {
     walkprint_ui_draw_line(canvas, 56, "115200 8N1");
 }
 
-static void walkprint_ui_draw_bmp_confirm(Canvas* canvas, WalkPrintApp* app) {
-    canvas_clear(canvas);
-    canvas_set_font(canvas, FontPrimary);
-    walkprint_ui_draw_line(canvas, 12, app->bmp_confirm_save_before_print ? "Save BMP?" : "Print BMP?");
-    canvas_set_font(canvas, FontSecondary);
-    walkprint_ui_draw_line(canvas, 24, app->status_line);
-    walkprint_ui_draw_line(canvas, 34, app->detail_line);
-    walkprint_ui_draw_line(
-        canvas, 50, app->bmp_confirm_save_before_print ? "OK Save + Print" : "OK Print");
-    walkprint_ui_draw_line(canvas, 60, "Back Cancel");
-}
-
 static void walkprint_ui_draw_wifi_results(Canvas* canvas, WalkPrintApp* app) {
     size_t first_visible = 0;
 
@@ -278,9 +266,6 @@ void app_ui_draw(Canvas* canvas, WalkPrintApp* app) {
     case WalkPrintScreenEditMessage:
         walkprint_ui_draw_busy(canvas, app);
         break;
-    case WalkPrintScreenConfirmBmp:
-        walkprint_ui_draw_bmp_confirm(canvas, app);
-        break;
     case WalkPrintScreenAbout:
         walkprint_ui_draw_header(canvas, app);
         walkprint_ui_draw_about(canvas);
@@ -327,7 +312,7 @@ static void walkprint_ui_handle_main_menu(WalkPrintApp* app, const InputEvent* i
             break;
         case 5:
             if(walkprint_app_select_bmp(app)) {
-                walkprint_app_show_bmp_confirm(app, false);
+                walkprint_app_queue_send_bmp(app);
             }
             break;
         case 6:
@@ -474,20 +459,6 @@ static void walkprint_ui_handle_about(WalkPrintApp* app, const InputEvent* input
     }
 }
 
-static void walkprint_ui_handle_bmp_confirm(WalkPrintApp* app, const InputEvent* input_event) {
-    switch(input_event->key) {
-    case InputKeyOk:
-        walkprint_app_confirm_bmp(app);
-        break;
-    case InputKeyBack:
-        app->screen = WalkPrintScreenMainMenu;
-        walkprint_app_set_status(app, "BMP canceled", "Back to menu");
-        break;
-    default:
-        break;
-    }
-}
-
 static void walkprint_ui_handle_busy(WalkPrintApp* app, const InputEvent* input_event) {
     if(input_event->key == InputKeyBack) {
         walkprint_app_request_cancel(app);
@@ -516,9 +487,6 @@ void app_ui_handle_input(WalkPrintApp* app, const InputEvent* input_event) {
         walkprint_ui_handle_busy(app, input_event);
         break;
     case WalkPrintScreenEditMessage:
-        break;
-    case WalkPrintScreenConfirmBmp:
-        walkprint_ui_handle_bmp_confirm(app, input_event);
         break;
     case WalkPrintScreenAbout:
         walkprint_ui_handle_about(app, input_event);
